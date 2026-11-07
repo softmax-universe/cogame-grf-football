@@ -19,7 +19,7 @@ OUT = os.path.join(ROOT, "coworld_manifest_template.json")
 
 SLUG = "grf-football"
 IMAGE = "{{GRF_FOOTBALL_IMAGE}}"
-REPO = "https://github.com/Metta-AI/cogame-grf-football"
+REPO = "https://github.com/softmax-universe/cogame-grf-football"
 SEATS = 8
 
 SLOTS = [{"team": "red" if i % 2 == 0 else "blue"} for i in range(SEATS)]
