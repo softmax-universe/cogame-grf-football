@@ -390,9 +390,25 @@ proc fallbackFor(
   seat: int,
   turn: int
 ): Directive =
-  ## The `zonal` order is the fallback for every failure mode.
-  result = sim.zonalDirective(seat, turn)
-  result.source = dsFallback
+  ## Neutral hold fallback for scored LLM failures: the controlled shirt holds
+  ## its current position without sprinting, tackling, or running `zonal`.
+  let cog = sim.cogs[cogOfSeat(seat)]
+  result = Directive(
+    turn: int32(turn),
+    half: sim.half,
+    source: dsFallback,
+    cog: CogOrder(
+      role: roleAnchor,
+      intent: inHoldShape,
+      targetX: cog.x,
+      targetY: cog.y,
+      onBall: obHold,
+      passTo: -1'i32,
+      sprint: spNever,
+      tackle: tkNever,
+      say: ""
+    )
+  )
 
 proc spacingSeconds(config: GameConfig): int {.inline.} =
   ## The rate floor in whole seconds; when it is off (the cert fixture) the
@@ -600,7 +616,7 @@ proc turn*(
         status = asAccepted
       engine.trajectory.recordDecision($turnIndex & "-" & $seat, $seat,
         observations[seat], attempts[seat], selected, action, status,
-        fallbackOrigin = (if status == asFallback: some("engine_scripted") else: none(string)))
+        fallbackOrigin = (if status == asFallback: some("engine_hold") else: none(string)))
 
   for i in 0 ..< CogCount:
     engine.lastCogStats[i] = sim.cogStats[i]
