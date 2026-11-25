@@ -309,8 +309,8 @@ proc validBareAndFencedRoundtrip() =
 
 proc ambiguousObjectTerminatesUnscored() =
   let ep = runEpisode("ambiguous", useMockSidecar = true, mmAmbiguousObject)
-  doAssert ep.mockCalls == 2,
-    "ambiguous reply must retry once before failing, got " & $ep.mockCalls
+  doAssert ep.mockCalls == 1,
+    "ambiguous reply fails on its sole request, got " & $ep.mockCalls
   doAssert not fileExists(ep.resultsPath),
     "invalid/ambiguous model failure must NOT write results.json or numeric scores"
   doAssert fileExists(ep.failurePath),
@@ -320,8 +320,8 @@ proc ambiguousObjectTerminatesUnscored() =
   doAssert "parse_error" in failure["message"].getStr,
     "failure message must attribute parse_error, got " & failure["message"].getStr
   let rep = verifyReplayHashChain(ep.replayPath)
-  doAssert rep.fallbacks.len == 2,
-    "both rejected attempts must be recorded, got " & $rep.fallbacks.len
+  doAssert rep.fallbacks.len == 1,
+    "the rejected request must be recorded, got " & $rep.fallbacks.len
   for fb in rep.fallbacks:
     doAssert fb{"cause"}.getStr == "parse_error"
   for d in rep.directives:
@@ -340,8 +340,8 @@ proc ambiguousObjectTerminatesUnscored() =
 
 proc providerFailureTerminatesUnscored() =
   let ep = runEpisode("provider", useMockSidecar = true, mmProviderFailure)
-  doAssert ep.mockCalls == 2,
-    "provider 503 must retry once before failing, got " & $ep.mockCalls
+  doAssert ep.mockCalls == 1,
+    "provider 503 fails on its sole request, got " & $ep.mockCalls
   doAssert not fileExists(ep.resultsPath),
     "provider failure must NOT write results.json or numeric scores"
   doAssert fileExists(ep.failurePath),
@@ -351,7 +351,7 @@ proc providerFailureTerminatesUnscored() =
   doAssert "transport_error" in failure["message"].getStr,
     "failure message must attribute transport_error, got " & failure["message"].getStr
   let rep = verifyReplayHashChain(ep.replayPath)
-  doAssert rep.fallbacks.len == 2
+  doAssert rep.fallbacks.len == 1
   for fb in rep.fallbacks:
     doAssert fb{"cause"}.getStr == "transport_error"
   for d in rep.directives:

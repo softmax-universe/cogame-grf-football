@@ -58,9 +58,7 @@ VARIANT_BASE = {
     "minPlayers": SEATS,
     "maxGames": 1,
     "turnTicks": 240,
-    "turnBudgetMs": 10000,
-    "attempt1Ms": 6000,
-    "retryMs": 3000,
+    "turnBudgetMs": 30000,
     "turnSpacingMs": 18000,
     "lobbyJoinTimeoutTicks": 1440,
     "startWaitTicks": 24,
@@ -155,9 +153,7 @@ manifest = {
                 "turnTicks": {
                     "type": "integer", "default": 240,
                     "description": "ticks between decision turns (10.0 s)"},
-                "turnBudgetMs": {"type": "integer", "default": 10000},
-                "attempt1Ms": {"type": "integer", "default": 6000},
-                "retryMs": {"type": "integer", "default": 3000},
+                "turnBudgetMs": {"type": "integer", "default": 30000},
                 "turnSpacingMs": {
                     "type": "integer", "default": 18000,
                     "description":
@@ -300,7 +296,7 @@ manifest = {
             "halfTicks": 720,
             "maxGames": 1,
             "turnTicks": 240,
-            "turnBudgetMs": 10000,
+            "turnBudgetMs": 30000,
             "turnSpacingMs": 0,
             "wallClockBudgetSeconds": 180,
             "lobbyJoinTimeoutTicks": 720,

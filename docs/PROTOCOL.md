@@ -162,10 +162,7 @@ parser.
 or inside a single ordinary outer Markdown code fence (plain or `json`-tagged).
 Surrounding prose, extra JSON objects, unknown fields, legacy field aliases,
 alternative `cogs`/`target` shapes, numeric strings, out-of-pitch targets,
-unmatched shirt ids, and invalid enum values are all **rejected** (triggering
-at most one retry; if still unresolved, the engine records the failure cause
-and terminates the unfinished episode unscored with no synthesized move or
-numeric score).
+unmatched shirt ids, and invalid enum values are all **rejected**. The engine records the failure cause and ends the episode unscored.
 
 ## The replay bytes
 

@@ -91,7 +91,7 @@ proc configSchemaCoversTheConfig() =
   let props = m["game"]["config_schema"]["properties"]
   # Every key the resolved config echoes that a variant may also set.
   for key in ["seed", "num_agents", "minPlayers", "maxTicks", "halfTicks",
-      "maxGames", "turnTicks", "turnBudgetMs", "attempt1Ms", "retryMs",
+      "maxGames", "turnTicks", "turnBudgetMs",
       "turnSpacingMs", "wallClockBudgetSeconds", "lobbyJoinTimeoutTicks",
       "startWaitTicks", "gameOverTicks", "mercyGoalDiff", "restartTicks",
       "stalemateTicks", "fastMode", "showPlayerLabels", "closedRoster",
