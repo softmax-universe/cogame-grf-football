@@ -233,6 +233,25 @@ proc invalidOnBallDiagnosticIncludesBoundedValue() =
   doAssert strBad.error == "invalid on_ball: \"bicycle_kick\"",
     "unexpected invalid on_ball string diagnostic: " & strBad.error
 
+  let tackleMisplaced = parse(sim, 2,
+    "{\"cogs\":[{\"id\":\"RED-9\",\"intent\":\"press\"," &
+    "\"target\":[0,0],\"on_ball\":\"tackle\"}]}")
+  doAssert not tackleMisplaced.ok
+  doAssert tackleMisplaced.error == "invalid on_ball: \"tackle\"",
+    "misplaced on_ball=tackle must be rejected explicitly: " & tackleMisplaced.error
+
+  let tackleValid = parse(sim, 2,
+    "{\"cogs\":[{\"id\":\"RED-9\",\"intent\":\"press\"," &
+    "\"target\":[0,0],\"on_ball\":\"pass_short\",\"tackle\":\"auto\"}]}")
+  doAssert tackleValid.ok, "valid off-ball tackle mode must parse: " & tackleValid.error
+  doAssert tackleValid.directive.cog.tackle == tkAuto
+
+  let tackleOff = parse(sim, 2,
+    "{\"cogs\":[{\"id\":\"RED-9\",\"intent\":\"shadow\"," &
+    "\"target\":[-10,0],\"tackle\":\"never\"}]}")
+  doAssert tackleOff.ok, "valid off-ball tackle=never must parse: " & tackleOff.error
+  doAssert tackleOff.directive.cog.tackle == tkNever
+
   let emptyBad = parse(sim, 2,
     "{\"cogs\":[{\"intent\":\"press\",\"target\":[0,0],\"on_ball\":\"\"}]}")
   doAssert not emptyBad.ok
@@ -293,6 +312,17 @@ proc systemMessageMinimumExampleParses() =
       "pass_high", "dribble", "hold", "pass_to", "sprint", "tackle", "role",
       "say", "note"]:
     doAssert capability in msg, "systemMessage must keep capability selectable: " & capability
+  for variant in [pvCanonical, pvPlain, pvNumbered, pvQuestions, pvReordered,
+      pvHeldoutBriefing, pvHeldoutReference]:
+    let vmsg = systemMessage(PromptSelection(variant: variant))
+    doAssert "tackle when the ball is at their feet" notin vmsg,
+      "prompt variant " & $variant & " must not tie tackling to having the ball at your feet"
+    for badPhrase in ["you lose the ball", "loses the ball", "loss of the ball",
+        "possession is lost", "lost possession"]:
+      doAssert badPhrase notin vmsg,
+        "prompt variant " & $variant & " must not imply a slide foul loses your own ball"
+    doAssert "never tackle" in vmsg and "off-ball slide-tackle permission" in vmsg,
+      "prompt variant " & $variant & " must separate on_ball from off-ball tackle"
   report "systemMessage embeds a legal minimum JSON reply that parses for every seat"
 
 when isMainModule:

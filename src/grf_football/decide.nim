@@ -12,7 +12,7 @@ import
   sim, directives, baselines, builtin_ai, llm, prompts, capture
 
 const CanonicalBriefing = """You control ONE shirt. Seven of your teammates are run by the engine's built-in AI:
-they hold a 4-3-3 shape, tackle when the ball is at their feet, pass to the nearest
+they hold a 4-3-3 shape, tackle opponents near the ball, pass to the nearest
 better-placed teammate, and never dribble far. Three other shirts on your team are
 controlled by other policies you cannot talk to.
 Every 10 seconds of match time you issue ONE order for your shirt. A deterministic
@@ -20,9 +20,9 @@ controller executes it for the next 10 seconds: it steers your cog, sprints, tac
 and plays the ball for you according to your order.
 The pitch is 84 by 54 metres. You attack toward the goal named in "attacking_goal".
 The ball goes OUT: throw-ins, corners and goal kicks are real. There is no offside.
-A slide tackle that misses the ball and hits the opponent is a foul: you lose the
-ball and lie grounded for two seconds. Sprinting drains stamina; low stamina slows you
-until it recovers.
+A slide tackle that misses the ball and hits the opponent is a foul: they get a free
+kick and you lie grounded for two seconds. Sprinting drains stamina; low stamina slows
+you until it recovers.
 """
 
 const ReplyRules = """Reply with a single JSON object and NOTHING else.
@@ -37,11 +37,12 @@ opponent).
 target: [x, y] finite numbers in metres, x in [-42, 42], y in [-27, 27] (used directly by
 hold_shape and as a bias by other intents).
 Optional cog fields (omit or null for default):
-- on_ball: shoot, pass_short, pass_long, pass_high, dribble, or hold (default pass_short; action
-  with the ball at your feet; an illegal choice uses the controller's safe option)
+- on_ball: shoot, pass_short, pass_long, pass_high, dribble, or hold (default pass_short;
+  only for when you control the ball, never tackle; if unavailable in play, the controller uses
+  its safe option)
 - pass_to: teammate shirt id other than yourself, e.g. "RED-10" (default null)
 - sprint: auto, always, or never (default auto)
-- tackle: auto or never (default auto)
+- tackle: auto or never (default auto; off-ball slide-tackle permission when defending)
 - id: your own shirt id from you.id (default your shirt)
 - role: striker, winger, playmaker, or anchor (default your seat role)
 - say: short shout up to 48 chars (default "")
@@ -53,60 +54,60 @@ proc systemMessage*(selection: PromptSelection): string =
   of pvCanonical: result.add(CanonicalBriefing)
   of pvPlain:
     result.add("Control just your own shirt. Seven teammates use built-in AI: they keep a 4-3-3 shape, " &
-      "tackle at the ball, pass to a nearby better-placed teammate, and avoid long dribbles. Three " &
+      "tackle opponents near the ball, pass to a nearby better-placed teammate, and avoid long dribbles. Three " &
       "teammates belong to other policies, with no chat between you. Give one order every 10 " &
       "seconds of match time; a deterministic controller follows it for the next 10 seconds, " &
       "handling movement, sprinting, tackles, and on-ball play. The pitch measures 84 × 54 metres; " &
       "attack the goal in \"attacking_goal\". The ball can go out for throw-ins, corners, or goal " &
       "kicks, and there is no offside. Sliding into an opponent without reaching the ball is a " &
-      "foul: you lose the ball and are grounded for two seconds. Sprinting drains stamina; low " &
+      "foul: they get a free kick and you are grounded for two seconds. Sprinting drains stamina; low " &
       "stamina slows you until it recovers.\n")
   of pvNumbered:
-    result.add("1. Responsibility: one shirt. Seven teammates are built-in AI, keeping a 4-3-3, tackling at " &
-      "the ball, passing to the nearest better-placed teammate, and avoiding long dribbles.\n2. " &
+    result.add("1. Responsibility: one shirt. Seven teammates are built-in AI, keeping a 4-3-3, tackling " &
+      "opponents near the ball, passing to the nearest better-placed teammate, and avoiding long dribbles.\n2. " &
       "Partners: three other policy-controlled teammates; no communication channel.\n3. Cadence: " &
       "one order each 10 seconds of match time. The deterministic controller executes steering, " &
       "sprinting, tackling, and ball play for the following 10 seconds.\n4. Pitch: 84 × 54 metres; " &
       "your goal to attack is \"attacking_goal\".\n5. Boundaries: throw-ins, corners, and goal kicks " &
-      "apply. No offside.\n6. Foul: a slide that misses the ball and hits an opponent loses the " &
-      "ball and grounds you for two seconds.\n7. Fatigue: sprinting consumes stamina; reduced speed " &
+      "apply. No offside.\n6. Foul: a slide that misses the ball and hits an opponent gives them a " &
+      "free kick and grounds you for two seconds.\n7. Fatigue: sprinting consumes stamina; reduced speed " &
       "lasts until low stamina recovers.\n")
   of pvQuestions:
     result.add("Who do you command? One shirt. Who runs the others? Built-in AI controls seven teammates in " &
-      "a 4-3-3: tackle at the ball, pass to the nearest better-positioned teammate, and do not " &
+      "a 4-3-3: tackle opponents near the ball, pass to the nearest better-positioned teammate, and do not " &
       "dribble far. Three teammates use other policies you cannot talk to. How often do you act? " &
       "One order every 10 match seconds; a deterministic controller steers, sprints, tackles, and " &
       "plays the ball for the next 10 seconds. Where do you play? An 84 × 54 metre pitch, " &
       "attacking \"attacking_goal\". What happens out of bounds? Throw-ins, corners, and goal kicks; " &
-      "no offside. What if a slide hits an opponent but misses the ball? A foul, loss of the ball, " &
-      "and two seconds grounded. Why limit sprinting? It drains stamina and low stamina slows you " &
+      "no offside. What if a slide hits an opponent but misses the ball? A foul, an opponent free " &
+      "kick, and two seconds grounded. Why limit sprinting? It drains stamina and low stamina slows you " &
       "until recovery.\n")
   of pvReordered:
     result.add("Sprint carefully: it drains stamina, and low stamina reduces speed until recovery. A slide " &
-      "that misses the ball and hits an opponent is a foul, losing the ball and grounding you for " &
+      "that misses the ball and hits an opponent is a foul, giving them a free kick and grounding you for " &
       "two seconds. There is no offside, but throw-ins, corners, and goal kicks apply on the 84 × " &
       "54 metre pitch; attack \"attacking_goal\". You control one shirt through one order each 10 " &
       "match seconds. A deterministic controller executes its steering, sprinting, tackles, and " &
       "ball play over the following 10 seconds. Seven teammates use built-in AI: a 4-3-3 shape, " &
-      "tackles at the ball, passes to the nearest better-placed teammate, and short dribbles. " &
+      "tackles on opponents near the ball, passes to the nearest better-placed teammate, and short dribbles. " &
       "Three other shirts use policies you cannot talk to.\n")
   of pvHeldoutBriefing:
     result.add("Act as one shirt in a team with seven built-in teammates and three other policy-controlled " &
-      "teammates. The built-in players keep a 4-3-3, tackle at the ball, pass to the nearest " &
+      "teammates. The built-in players keep a 4-3-3, tackle opponents near the ball, pass to the nearest " &
       "better-placed teammate, and do not dribble far; you cannot talk to the other policies. " &
       "Every 10 seconds of match time, send one order. A deterministic controller carries out " &
       "movement, sprinting, tackles, and ball play for the next 10 seconds. Use the 84 × 54 metre " &
       "pitch and attack the goal identified by \"attacking_goal\". Out-of-play balls produce " &
       "throw-ins, corners, or goal kicks; offside is absent. A slide missing the ball and hitting " &
-      "an opponent is a foul: possession is lost and you are grounded for two seconds. Sprinting " &
+      "an opponent is a foul: they receive a free kick and you are grounded for two seconds. Sprinting " &
       "spends stamina; low stamina slows you until it recovers.\n")
   of pvHeldoutReference:
-    result.add("Controlled unit: one shirt. Built-in teammates: seven; 4-3-3 shape, tackle at ball, pass to " &
+    result.add("Controlled unit: one shirt. Built-in teammates: seven; 4-3-3 shape, tackle opponents near ball, pass to " &
       "nearest better-placed teammate, no long dribbles. Other policy teammates: three, no chat. " &
       "Order interval: 10 match seconds. Execution: deterministic steering/sprint/tackle/ball play " &
       "over the next 10 seconds. Pitch: 84 × 54 metres. Attack direction: \"attacking_goal\". " &
       "Out-of-play rules: throw-ins, corners, goal kicks. Offside: none. Slide into opponent " &
-      "without reaching ball: foul, lost possession, two seconds grounded. Sprint cost: stamina; " &
+      "without reaching ball: foul, opponent free kick, two seconds grounded. Sprint cost: stamina; " &
       "low-stamina speed loss lasts until recovery.\n")
   of pvMixed: raise newException(ValueError, "mixed selection must resolve")
   result.add(ReplyRules)
