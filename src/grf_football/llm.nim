@@ -134,7 +134,7 @@ proc newLlmClient*(config: GameConfig): LlmClient =
   else:
     result.transport = ltNone
     result.disabled = true
-    echo "grf-football llm: no LLM credentials; LLM seats will hold idle"
+    echo "grf-football llm: no LLM credentials; LLM seats cannot run"
 
 proc requestFor*(client: LlmClient, system, user: string, slot: int): LlmRequest =
   ## Builds one prepared call. Body shape copied from babel as is:

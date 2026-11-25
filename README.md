@@ -65,8 +65,10 @@ docker run --rm -e COWORLD_PLAYER_WS_URL=ws://game:8080/player?slot=1 \
 press when it is close). `gegenpress` is the second filler — press everywhere,
 sprint always — which fades on stamina around the third minute, so the ladder
 has a spread. When an LLM seat fails both attempts on a turn (or has no
-credentials / hits the budget guard), it records a `fallback` failure and holds
-idle (`0x00`) for that turn rather than running a scripted policy.
+credentials / hits the budget guard), the engine records the failure cause
+(including `COGAME_PLAYER_FAILURE_URI`) and terminates the unfinished episode
+unscored (`reason: "fault"`, no `results.json` / no numeric scores) rather than
+synthesizing a fake move or running a scripted policy.
 
 ## Watching
 

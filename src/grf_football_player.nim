@@ -75,16 +75,30 @@ proc connectWithRetry(url: string): WebSocket =
           ConnectTimeoutMs div 1000, "s"
       sleep(ConnectRetryMs)
 
+const
+  DefaultModelPrompt =
+    "Play smart team football for your shirt using the match view. Support " &
+    "teammates in possession, press when closest to the ball, hold shape " &
+    "defensively, shoot inside 22 metres, and manage stamina across both halves."
+
+proc isTruthyEnv(value: string): bool =
+  value.strip().toLowerAscii() in ["1", "true", "yes", "on"]
+
 when isMainModule:
   let url = getEnv("COWORLD_PLAYER_WS_URL")
   if url.len == 0:
     quit("COWORLD_PLAYER_WS_URL is not set", 1)
   let
-    prompt = getEnv("PLAYER_PROMPT").strip()
+    llmEnabled = isTruthyEnv(getEnv("COWORLD_LLM_ENABLED"))
+    promptEnv = getEnv("PLAYER_PROMPT").strip()
     scriptedEnv = getEnv("PLAYER_SCRIPTED").strip().toLowerAscii()
     label = getEnv("PLAYER_POLICY_LABEL").strip()
-  if prompt.len > 0 and scriptedEnv.len > 0:
-    quit("grf-football player: set either PLAYER_PROMPT or PLAYER_SCRIPTED, not both", 1)
+  if (promptEnv.len > 0 or llmEnabled) and scriptedEnv.len > 0:
+    quit("grf-football player: set either LLM mode (COWORLD_LLM_ENABLED/PLAYER_PROMPT) or PLAYER_SCRIPTED, not both", 1)
+  let prompt =
+    if promptEnv.len > 0: promptEnv
+    elif llmEnabled: DefaultModelPrompt
+    else: ""
   var scripted = ""
   if prompt.len == 0:
     if scriptedEnv.len == 0:

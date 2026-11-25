@@ -163,8 +163,9 @@ or inside a single ordinary outer Markdown code fence (plain or `json`-tagged).
 Surrounding prose, extra JSON objects, unknown fields, legacy field aliases,
 alternative `cogs`/`target` shapes, numeric strings, out-of-pitch targets,
 unmatched shirt ids, and invalid enum values are all **rejected** (triggering
-the retry, then a recorded `fallback` failure with neutral idle `0x00` for that
-turn — never silent substitution or `zonal` play).
+at most one retry; if still unresolved, the engine records the failure cause
+and terminates the unfinished episode unscored with no synthesized move or
+numeric score).
 
 ## The replay bytes
 

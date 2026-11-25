@@ -204,7 +204,8 @@ score(seat) = 0.5 + 0.5 · clamp(gd(team of seat) / 3, −1, +1)
 **Higher is better.** 3–0 or better = 1.000; 2–0 = 0.833; 1–0 = 0.667; any draw
 = 0.500. The eight `scores` sum to exactly **4.000** in every legal outcome and
 the two team scores sum to 1.000. `win[seat] = gd(team) > 0`. A `fault` episode
-scores 0.500 × 8 with `win` all false — an infra fault is nobody's loss.
+is **unscored** (no numeric `scores`, no `win`, and no `results.json` written)
+— an infra, missing-decision, or host fault never invents a score or winner.
 
 Per-seat football statistics (goals, assists, passes, tackles) are reported for
 the board and the feed but are **not** in the score: checkpoint shaping is
@@ -218,17 +219,18 @@ makes a team zero-sum game collusion-friendly.
 | `complete` | `full_time` | 5760 ticks played. The normal ending. |
 | `complete` | `mercy` | goal difference ≥ 5 at a turn boundary. |
 | `deadline` | `wall_clock` | `wallClockBudgetSeconds` (690) elapsed first. The score at that instant stands and the replay is complete up to the stop tick. |
-| `fault` | `sim_fault` | a physics invariant guard tripped. 0.500 × 8. |
-| `fault` | `host_error` | an unexpected server-side exception. 0.500 × 8. |
+| `fault` | `sim_fault` | a physics invariant guard tripped. Unscored. |
+| `fault` | `host_error` | an unexpected server-side exception, lobby no-show, or failed/missing LLM decision. Unscored. |
 
-### Disconnects
+### Disconnects and missing decisions
 
-A seat that never connects does **not** end the episode. After
-`lobbyJoinTimeoutTicks` (1440 = 60 s) the no-show is reported to
-`COGAME_PLAYER_FAILURE_URI`, its shirt is driven by the `zonal` baseline for the
-whole match, and the match plays to full time. A seat that drops mid-match keeps
-playing the same way and revives on reconnect. **No failure mode leaves a cog
-unactuated.**
+A seat that never connects within `lobbyJoinTimeoutTicks` (1440 = 60 s) is
+reported to `COGAME_PLAYER_FAILURE_URI` and terminates the unfinished episode
+unscored (`fault/host_error`) with no synthesized baseline play. Likewise, an
+LLM seat whose decision fails both attempts (invalid/ambiguous output, provider
+or transport error, timeout, missing credentials, or budget guard) records the
+failure cause and terminates the unfinished episode unscored with zero
+synthesized control.
 
 ## Determinism
 

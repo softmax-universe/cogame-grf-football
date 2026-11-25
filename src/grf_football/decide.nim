@@ -1,5 +1,6 @@
 ## The turn engine: one decision every 240 ticks, ALL EIGHT SEATS issued as ONE
-## parallel batch, two bounded attempts, then neutral idle fallback.
+## parallel batch, two bounded attempts, and explicit failure termination with
+## zero synthesized control when an LLM seat cannot produce a valid directive.
 ##
 ## Timing (docs/RULES.md §Budget):
 ##   attempt 1 batch deadline   6.0 s   (config attempt1Ms)
@@ -147,6 +148,13 @@ type
     baseline*: string
     label*: string
     connected*: bool
+
+  TurnFailure* = object
+    failed*: bool
+    seat*: int
+    cause*: string
+    detail*: string
+    isInfra*: bool
 
   TurnEngine* = ref object
     trajectory*: DecisionTrajectory
@@ -384,32 +392,6 @@ proc noteGoal*(engine: TurnEngine, tick: int, cog: int, team: Team) =
   while engine.lastGoals.len > 4:
     engine.lastGoals.delete(0)
 
-proc fallbackFor(
-  engine: TurnEngine,
-  sim: SimServer,
-  seat: int,
-  turn: int
-): Directive =
-  ## Neutral hold fallback for scored LLM failures: the controlled shirt holds
-  ## its current position without sprinting, tackling, or running `zonal`.
-  let cog = sim.cogs[cogOfSeat(seat)]
-  result = Directive(
-    turn: int32(turn),
-    half: sim.half,
-    source: dsFallback,
-    cog: CogOrder(
-      role: roleAnchor,
-      intent: inHoldShape,
-      targetX: cog.x,
-      targetY: cog.y,
-      onBall: obHold,
-      passTo: -1'i32,
-      sprint: spNever,
-      tackle: tkNever,
-      say: ""
-    )
-  )
-
 proc spacingSeconds(config: GameConfig): int {.inline.} =
   ## The rate floor in whole seconds; when it is off (the cert fixture) the
   ## turn budget stands in, so the guard still means something.
@@ -421,21 +403,27 @@ proc turn*(
   sim: var SimServer,
   turnIndex: int,
   elapsedSeconds: int
-) =
+): TurnFailure =
   ## Runs one decision turn: at most one parallel batch plus at most one
-  ## parallel retry, all inside a monotonic `turnBudgetMs` bound, then installs
-  ## all eight seats' directives and writes the records.
+  ## parallel retry, all inside a monotonic `turnBudgetMs` bound. If any LLM
+  ## seat fails to produce a valid directive (invalid/ambiguous output,
+  ## transport/provider error, timeout, missing credentials, or budget guard),
+  ## returns a `TurnFailure` with zero synthesized control so the server
+  ## terminates the unfinished episode unscored.
   engine.records.setLen(0)
   var observations: array[SeatCount, JsonNode]
+  var hasLlmSeat = false
   for seat in 0 ..< SeatCount:
     observations[seat] = engine.seatViewJson(sim, seat, turnIndex)
+    if engine.policies[seat].kind == pkLlm:
+      hasLlmSeat = true
   let
     budget = sim.config.wallClockBudgetSeconds
     perTurn = spacingSeconds(sim.config)
 
-  # Budget guard: switch the LLM off for the rest of the match rather than let
-  # the episode end `deadline`. Microseconds per turn from here on.
-  if not engine.llmOff and elapsedSeconds + 2 * perTurn > budget:
+  # Budget guard: if remaining wall-clock time cannot fit two more LLM turns,
+  # abort rather than synthesizing fake control for LLM seats.
+  if hasLlmSeat and not engine.llmOff and elapsedSeconds + 2 * perTurn > budget:
     engine.llmOff = true
     engine.guardTurn = turnIndex
     engine.addRecord(%*{
@@ -444,11 +432,13 @@ proc turn*(
       "remaining_s": budget - elapsedSeconds
     })
     echo "grf-football: budget guard at turn ", turnIndex,
-      "; LLM seats will hold idle for the rest of the match"
+      "; aborting unfinished episode without synthesized control"
 
   var
     resolved: array[SeatCount, Directive]
     settled: array[SeatCount, bool]
+    seatCause: array[SeatCount, string]
+    seatDetail: array[SeatCount, string]
     calls: seq[BatchCall]
     attempts: array[SeatCount, seq[DecisionAttempt]]
   for seat in 0 ..< SeatCount:
@@ -460,8 +450,6 @@ proc turn*(
         (not engine.client.isNil and engine.client.disabled):
       # A nil CLIENT with a live batch is the test seam (tests/test_engine.nim
       # injects a fake transport); a nil BATCH is the real no-credentials path.
-      resolved[seat] = engine.fallbackFor(sim, seat, turnIndex)
-      settled[seat] = true
       let rejected =
         not engine.client.isNil and engine.client.transport != ltNone
       let cause =
@@ -469,9 +457,12 @@ proc turn*(
         elif rejected: "transport_error"
         else: "no_credentials"
       let detail =
-        if rejected: "credentials rejected; the client is disabled for the " &
+        if engine.llmOff: "decision budget guard reached"
+        elif rejected: "credentials rejected; the client is disabled for the " &
           "rest of the episode"
-        else: ""
+        else: "no LLM credentials configured"
+      seatCause[seat] = cause
+      seatDetail[seat] = detail
       engine.addRecord(%*{
         "k": "fallback", "turn": turnIndex, "seat": seat,
         "attempt": 1, "cause": cause,
@@ -558,6 +549,8 @@ proc turn*(
           detail = failure.msg
       if cause.len > 0:
         receipt.rejectionReason = some(cause & ": " & detail)
+        seatCause[seat] = cause
+        seatDetail[seat] = detail
       attempts[seat].add(receipt)
       if cause.len > 0:
         engine.addRecord(%*{
@@ -571,15 +564,32 @@ proc turn*(
     calls = retry
     inc attempt
 
-  for call in calls:
-    # Two consecutive failures: the seat holds idle this turn.
-    let seat = clamp(call.seat, 0, SeatCount - 1)
-    resolved[seat] = engine.fallbackFor(sim, seat, turnIndex)
-    settled[seat] = true
-
+  var firstFailed = -1
   for seat in 0 ..< SeatCount:
     if not settled[seat]:
-      resolved[seat] = engine.fallbackFor(sim, seat, turnIndex)
+      firstFailed = seat
+      break
+
+  if firstFailed >= 0:
+    let cause = if seatCause[firstFailed].len > 0: seatCause[firstFailed] else: "missing_decision"
+    let detail = seatDetail[firstFailed]
+    if not engine.trajectory.isNil:
+      for seat in 0 ..< SeatCount:
+        if not settled[seat]:
+          let c = if seatCause[seat].len > 0: seatCause[seat] else: "missing_decision"
+          let status = if c == "parse_error": asRejected else: asMissing
+          engine.trajectory.recordDecision($turnIndex & "-" & $seat, $seat,
+            observations[seat], attempts[seat], none(string), newJNull(),
+            status, terminal = true)
+    return TurnFailure(
+      failed: true,
+      seat: firstFailed,
+      cause: cause,
+      detail: detail,
+      isInfra: cause != "parse_error"
+    )
+
+  for seat in 0 ..< SeatCount:
     resolved[seat].turn = int32(turnIndex)
     resolved[seat].half = sim.half
     sim.activeDirective[seat] = resolved[seat]
@@ -597,9 +607,7 @@ proc turn*(
     engine.addRecord(action)
     if not engine.trajectory.isNil:
       var selected = none(string)
-      var status = asFallback
       if resolved[seat].source == dsLlm:
-        status = asAccepted
         for receipt in attempts[seat].mitems:
           if receipt.accepted:
             receipt.parsedAction = action
@@ -611,13 +619,12 @@ proc turn*(
         receipt.parsedAction = action
         selected = some(receipt.attemptId)
         attempts[seat].add(receipt)
-        status = asAccepted
       engine.trajectory.recordDecision($turnIndex & "-" & $seat, $seat,
-        observations[seat], attempts[seat], selected, action, status,
-        fallbackOrigin = (if status == asFallback: some("engine_hold") else: none(string)))
+        observations[seat], attempts[seat], selected, action, asAccepted)
 
   for i in 0 ..< CogCount:
     engine.lastCogStats[i] = sim.cogStats[i]
   for team in Team:
     engine.lastTeamStats[team] = sim.teamStats[team]
   engine.lastGoals.setLen(0)
+  TurnFailure(failed: false)

@@ -222,6 +222,34 @@ manifest = {
     "tags": ["football", "soccer", "physics", "team", "gfootball", "llm"],
     "player": [
         {
+            "id": "model",
+            "name": "GRF Football Native Model Player",
+            "description": (
+                "Native LLM seat: registers an LLM policy with the game "
+                "server (no scripted baseline) so every 10 s decision turn "
+                "queries the configured model and executes its validated "
+                "JSON directive."
+            ),
+            "type": "player",
+            "image": IMAGE,
+            "run": ["/bin/grf-football-player"],
+            "env": {
+                "COWORLD_LLM_ENABLED": "true",
+                "PLAYER_PROMPT": (
+                    "Play smart team football for your shirt using the match "
+                    "view. Support teammates in possession, press when "
+                    "closest to the ball, hold shape defensively, shoot "
+                    "inside 22 metres, and manage stamina across both halves."
+                ),
+                "PLAYER_POLICY_LABEL": "grf-football-model",
+            },
+            "source_url": REPO + "/tree/main",
+            "resources": {
+                "requests": {"cpu": "100m", "memory": "64Mi"},
+                "limits": {"cpu": "1"},
+            },
+        },
+        {
             "id": "baseline",
             "name": "GRF Football Zonal Baseline",
             "description": (
@@ -239,7 +267,7 @@ manifest = {
                 "requests": {"cpu": "100m", "memory": "64Mi"},
                 "limits": {"cpu": "1"},
             },
-        }
+        },
     ],
     "variants": [
         variant("match", "Match (8 seats, 11 v 11, 4:00)",
