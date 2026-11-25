@@ -139,11 +139,11 @@ View coordinates (metres, centred), rounded to one decimal.
 |---|---|---|
 | `note` | optional string, ≤ 160 runes (truncated on a rune boundary) | `""` |
 | `cogs` | required array of **exact length 1**, containing one object | none (rejected) |
-| `cogs[0].id` | required string matching the seat's own shirt alias (`RED-9`, case-insensitive) | none (rejected) |
+| `cogs[0].id` | optional string matching the seat's own shirt alias (`RED-9`, case-insensitive), or `null` | the seat's own shirt alias |
 | `cogs[0].role` | optional string: `striker` `winger` `playmaker` `anchor` | the shirt's table role |
 | `cogs[0].intent` | required string: `press` `hold_shape` `make_run` `support` `drop_deep` `carry` `switch_play` `shadow` | none (rejected) |
 | `cogs[0].target` | required `[x, y]` array of 2 finite JSON numbers with x ∈ [−42, 42], y ∈ [−27, 27] | none (rejected) |
-| `cogs[0].on_ball` | required string: `shoot` `pass_short` `pass_long` `pass_high` `dribble` `hold` | none (rejected) |
+| `cogs[0].on_ball` | optional string: `shoot` `pass_short` `pass_long` `pass_high` `dribble` `hold`, or `null` | `pass_short` |
 | `cogs[0].pass_to` | optional teammate shirt id ≠ self, or `null` | `null` (controller picks best `passScore` receiver) |
 | `cogs[0].sprint` | optional string: `auto` `always` `never` | `auto` |
 | `cogs[0].tackle` | optional string: `auto` `never` | `auto` |
