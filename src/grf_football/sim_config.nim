@@ -25,8 +25,6 @@ proc defaultGameConfig*(): GameConfig =
     maxGames: DefaultMaxGames,
     turnTicks: DefaultTurnTicks,
     turnBudgetMs: DefaultTurnBudgetMs,
-    attempt1Ms: DefaultAttempt1Ms,
-    retryMs: DefaultRetryMs,
     turnSpacingMs: DefaultTurnSpacingMs,
     wallClockBudgetSeconds: DefaultWallClockBudgetSeconds,
     mercyGoalDiff: DefaultMercyGoalDiff,
@@ -124,18 +122,8 @@ proc validate*(config: GameConfig) =
     raise newException(GrfFootballError, "halfTicks must be positive")
   if config.turnTicks <= 0:
     raise newException(GrfFootballError, "turnTicks must be positive")
-  if config.turnBudgetMs < config.attempt1Ms + config.retryMs:
-    raise newException(GrfFootballError,
-      "turnBudgetMs must cover attempt1Ms + retryMs")
-  # curl's CURLOPT_TIMEOUT granularity is WHOLE SECONDS, so a sub-second
-  # deadline is not a deadline at all -- it floors to curly's own one-second
-  # minimum and the turn budget stops bounding anything. The starter's scar.
-  if config.attempt1Ms > 0 and config.attempt1Ms < 1000:
-    raise newException(GrfFootballError,
-      "attempt1Ms must be 0 or at least 1000 (curl timeouts are whole seconds)")
-  if config.retryMs > 0 and config.retryMs < 1000:
-    raise newException(GrfFootballError,
-      "retryMs must be 0 or at least 1000 (curl timeouts are whole seconds)")
+  if config.turnBudgetMs < 1000:
+    raise newException(GrfFootballError, "turnBudgetMs must allow at least one second")
   if config.turnSpacingMs < 0:
     raise newException(GrfFootballError, "turnSpacingMs must not be negative")
   if config.wallClockBudgetSeconds <= 0:
@@ -175,8 +163,6 @@ proc update*(config: var GameConfig, configJson: string) =
   node.readInt("maxGames", config.maxGames)
   node.readInt("turnTicks", config.turnTicks)
   node.readInt("turnBudgetMs", config.turnBudgetMs)
-  node.readInt("attempt1Ms", config.attempt1Ms)
-  node.readInt("retryMs", config.retryMs)
   node.readInt("turnSpacingMs", config.turnSpacingMs)
   node.readInt("wallClockBudgetSeconds", config.wallClockBudgetSeconds)
   node.readInt("mercyGoalDiff", config.mercyGoalDiff)
@@ -262,8 +248,6 @@ proc configJson*(config: GameConfig): string =
     "maxGames": config.maxGames,
     "turnTicks": config.turnTicks,
     "turnBudgetMs": config.turnBudgetMs,
-    "attempt1Ms": config.attempt1Ms,
-    "retryMs": config.retryMs,
     "turnSpacingMs": config.turnSpacingMs,
     "wallClockBudgetSeconds": config.wallClockBudgetSeconds,
     "mercyGoalDiff": config.mercyGoalDiff,

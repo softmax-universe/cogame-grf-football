@@ -1,19 +1,6 @@
 ## The turn engine: one decision every 240 ticks, ALL EIGHT SEATS issued as ONE
-## parallel batch, two bounded attempts, and explicit failure termination with
-## zero synthesized control when an LLM seat cannot produce a valid directive.
-##
-## Timing (docs/RULES.md §Budget):
-##   attempt 1 batch deadline   6.0 s   (config attempt1Ms)
-##   retry batch deadline       3.0 s   (config retryMs)
-##   outer monotonic turn cap  10.0 s   (config turnBudgetMs)
-##   rate floor between batch STARTS 18.0 s (config turnSpacingMs)
-## curly's transport timeout is whole seconds and a batch in flight cannot be
-## interrupted, so the per-attempt allowance is floored to whole seconds before
-## it is handed over: 6 s + 3 s = 9 s realised worst case, inside the 10 s cap.
-## The rate floor dominates: 24 turns x 18 s = 432 s, which pins the episode at
-## 8 x 60/18 = 26.7 requests/minute — inside the hosted sidecar's 30/min
-## episode cap. The certification fixture sets `turnSpacingMs` to 0, so offline
-## runs pay nothing.
+## parallel batch bounded by turnBudgetMs. An unresolved decision ends the
+## episode unscored. turnSpacingMs sets the minimum time between batch starts.
 ##
 ## Seats are NEVER queried sequentially: football is a simultaneous-decision
 ## game. The transport is injected as a `BatchFn` so tests/test_engine.nim can
@@ -404,8 +391,7 @@ proc turn*(
   turnIndex: int,
   elapsedSeconds: int
 ): TurnFailure =
-  ## Runs one decision turn: at most one parallel batch plus at most one
-  ## parallel retry, all inside a monotonic `turnBudgetMs` bound. If any LLM
+  ## Runs one decision turn: one parallel batch inside a monotonic `turnBudgetMs` bound. If any LLM
   ## seat fails to produce a valid directive (invalid/ambiguous output,
   ## transport/provider error, timeout, missing credentials, or budget guard),
   ## returns a `TurnFailure` with zero synthesized control so the server
@@ -493,19 +479,14 @@ proc turn*(
     engine.lastBatchStart = getMonoTime()
     engine.hasBatched = true
 
-  var attempt = 1
-  while calls.len > 0 and attempt <= 2:
-    let
-      remainingMs = (deadline - getMonoTime()).inMilliseconds
-      wantMs = if attempt == 1: sim.config.attempt1Ms else: sim.config.retryMs
-      allowedMs = min(wantMs, int(max(0'i64, remainingMs)))
-    if allowedMs <= 0:
-      break
+  let allowedMs = max(0, (deadline - getMonoTime()).inMilliseconds.int)
+  if calls.len > 0 and allowedMs > 0:
+    const attempt = 1
     let started = getMonoTime()
     var replies: seq[BatchReply]
     try:
       # FLOOR, not ceiling: curly's timeout is whole seconds and a batch in
-      # flight is not interruptible, so rounding up would let the retry run
+      # flight is not interruptible, so rounding up would let the batch run
       # past the turn budget the outer deadline is supposed to enforce.
       replies = engine.batch(calls, max(1, allowedMs div 1000))
     except CatchableError as failure:
@@ -513,7 +494,6 @@ proc turn*(
       for call in calls:
         replies.add BatchReply(seat: call.seat, error: failure.msg)
     let latency = int32((getMonoTime() - started).inMilliseconds)
-    var retry: seq[BatchCall]
     for reply in replies:
       let seat = clamp(reply.seat, 0, SeatCount - 1)
       var cause = ""
@@ -558,12 +538,6 @@ proc turn*(
           "attempt": attempt, "cause": cause,
           "detail": clipRunes(detail, MaxDetailRunes)
         })
-        for call in calls:
-          if call.seat == reply.seat:
-            retry.add call
-    calls = retry
-    inc attempt
-
   var firstFailed = -1
   for seat in 0 ..< SeatCount:
     if not settled[seat]:

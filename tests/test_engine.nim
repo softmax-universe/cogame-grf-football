@@ -1,5 +1,5 @@
 import grf_football/prompts
-## The decision loop: ONE parallel batch of eight per turn, one bounded retry,
+## The decision loop: ONE parallel batch of eight per turn, one shared deadline,
 ## the scripted fallback, the budget guard, and the per-turn wall clock.
 
 import std/[json, monotimes, os, strutils, times]
@@ -65,17 +65,15 @@ proc oneBatchOfEightPerTurn() =
     doAssert sim.seatStats[seat].llmTurns == 1
   report "all eight seats' calls go out as ONE parallel batch per turn"
 
-proc timeoutRetriesOnceThenFailsUnscored() =
+proc timeoutFailsUnscored() =
   var sim = playing(testConfig())
   let rec = Recorder()
   let engine = llmEngine(failingBatch(rec, "Operation timed out after 6000 ms"))
   let outcome = engine.turn(sim, 1, 0)
-  doAssert outcome.failed, "two timeouts must fail the turn without fake moves"
+  doAssert outcome.failed, "a timeout must fail the turn without fake moves"
   doAssert outcome.cause == "timeout"
   doAssert outcome.isInfra
-  doAssert rec.calls.len == 2,
-    "a failure retries EXACTLY once, got " & $rec.calls.len & " attempts"
-  doAssert rec.calls[1] == SeatCount, "the retry is one batch too"
+  doAssert rec.calls.len == 1, "one request per seat and turn"
   for seat in 0 ..< SeatCount:
     doAssert not sim.hasDirective[seat],
       "failed LLM seat must not receive a synthesized directive"
@@ -90,12 +88,12 @@ proc timeoutRetriesOnceThenFailsUnscored() =
       inc timeouts
     elif node{"k"}.getStr == "directive" and node{"source"}.getStr == "fallback":
       inc fallbackDirectives
-  doAssert timeouts == 2 * SeatCount,
+  doAssert timeouts == SeatCount,
     "one fallback record per failed attempt per seat, got " & $timeouts
   doAssert fallbackDirectives == 0, "no synthesized fallback directive may be emitted"
-  report "a timeout retries exactly once, then fails with zero synthesized control"
+  report "a timeout ends the turn with zero synthesized control"
 
-proc parseFailureRetriesAndFails() =
+proc parseFailureEndsTurn() =
   var sim = playing(testConfig())
   let rec = Recorder()
   let engine = llmEngine(replyingBatch(rec, "I am not going to answer."))
@@ -103,7 +101,7 @@ proc parseFailureRetriesAndFails() =
   doAssert outcome.failed
   doAssert outcome.cause == "parse_error"
   doAssert not outcome.isInfra
-  doAssert rec.calls.len == 2, "unparseable text retries once"
+  doAssert rec.calls.len == 1, "one call for unparseable text"
   for seat in 0 ..< SeatCount:
     doAssert not sim.hasDirective[seat]
   var causes: seq[string]
@@ -112,7 +110,7 @@ proc parseFailureRetriesAndFails() =
     if node{"k"}.getStr == "fallback":
       causes.add(node{"cause"}.getStr)
   doAssert "parse_error" in causes, "the cause names the parse failure"
-  report "an unparseable reply retries once and then fails without fake moves"
+  report "an unparseable reply ends the turn without fake moves"
 
 proc wrongShirtIdAndProseRejected() =
   var sim = playing(testConfig())
@@ -123,7 +121,7 @@ proc wrongShirtIdAndProseRejected() =
   doAssert outcome.failed
   doAssert outcome.cause == "parse_error"
   doAssert not outcome.isInfra
-  doAssert rec.calls.len == 2, "wrong shirt id retries once"
+  doAssert rec.calls.len == 1, "one call for a wrong shirt id"
   for seat in 0 ..< SeatCount:
     doAssert not sim.hasDirective[seat]
   var sawIdError = false
@@ -213,7 +211,7 @@ proc turnStaysInsideItsBudget() =
     "four turns must stay inside four turn budgets, took " & $elapsed & " ms"
   for t in rec.timeouts:
     doAssert t >= 1, "curly's whole-second floor is respected"
-    doAssert t <= (sim.config.attempt1Ms div 1000),
+    doAssert t <= (sim.config.turnBudgetMs div 1000),
       "an attempt is never given more than its allowance"
   report "a turn's wall clock never exceeds turnBudgetMs"
 
@@ -233,8 +231,8 @@ proc failureDeclarationShape() =
 when isMainModule:
   echo "test_engine"
   oneBatchOfEightPerTurn()
-  timeoutRetriesOnceThenFailsUnscored()
-  parseFailureRetriesAndFails()
+  timeoutFailsUnscored()
+  parseFailureEndsTurn()
   wrongShirtIdAndProseRejected()
   registrationRejectsInvalidScriptedAndConflict()
   noCredentialsFailsWithoutBlocking()

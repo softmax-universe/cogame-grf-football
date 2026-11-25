@@ -459,8 +459,6 @@ type
     maxGames*: int
     turnTicks*: int
     turnBudgetMs*: int
-    attempt1Ms*: int
-    retryMs*: int
     turnSpacingMs*: int
     wallClockBudgetSeconds*: int
     mercyGoalDiff*: int
