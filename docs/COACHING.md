@@ -20,7 +20,7 @@ Twenty-four turns, one order each. That is the whole game from your side.
 | 6 / 7 | `RED-6` / `BLUE-6` | anchor |
 
 The other **seven shirts on your side, including the keeper, are the engine's
-built-in AI**. It holds a 4-3-3 shape, tackles when the ball is at its feet,
+built-in AI**. It holds a 4-3-3 shape, tackles opponents near the ball,
 passes to the nearest better-placed teammate and never carries the ball more
 than 8 m. It also **yields to you**: when a seated cog and a built-in cog of the
 same team are both within 3 m of a loose ball, the built-in cog steps off and

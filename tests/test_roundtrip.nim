@@ -27,6 +27,7 @@ type
   MockMode = enum
     mmValidBareAndFence
     mmAmbiguousObject
+    mmInvalidOnBallTackle
     mmProviderFailure
 
   MockServerArgs = object
@@ -80,13 +81,13 @@ proc mockLlmHandler(request: Request) =
   of mmValidBareAndFence:
     let text =
       if n == 0:
-        # Bare JSON with optional metadata omitted (note, id, role, pass_to, sprint, tackle, say)
+        # Bare JSON using explicit off-ball tackle="auto" with optional metadata omitted
         # and on_ball explicitly null (defaults to pass_short).
-        """{"cogs":[{"intent":"press","target":[4,2],"on_ball":null}]}"""
+        """{"cogs":[{"intent":"press","target":[4,2],"on_ball":null,"tackle":"auto"}]}"""
       else:
-        # Single json-tagged markdown fence with optional fields present.
+        # Single json-tagged markdown fence with optional fields and tackle="never".
         "```json\n" &
-        """{"note":"turn 1 fenced","cogs":[{"id":"RED-10","intent":"support","target":[8,-3],"on_ball":"shoot","say":"push up"}]}""" &
+        """{"note":"turn 1 fenced","cogs":[{"id":"RED-10","intent":"support","target":[8,-3],"on_ball":"shoot","tackle":"never","say":"push up"}]}""" &
         "\n```"
     let body = $(%*{
       "id": "msg_test_" & $n,
@@ -105,6 +106,19 @@ proc mockLlmHandler(request: Request) =
       """{"note":"second","cogs":[{"id":"RED-10","intent":"support","target":[5,5],"on_ball":"pass_short"}]}"""
     let body = $(%*{
       "id": "msg_ambig_" & $n,
+      "type": "message",
+      "role": "assistant",
+      "model": "anthropic/claude-haiku-4.5",
+      "stop_reason": "end_turn",
+      "content": [{"type": "text", "text": text}]
+    })
+    request.respond(200, headers, body)
+  of mmInvalidOnBallTackle:
+    # Misplaced tackle in on_ball must be strictly rejected with GamePlayerFailure.
+    let text =
+      """{"note":"press","cogs":[{"id":"RED-10","intent":"press","target":[0,0],"on_ball":"tackle"}]}"""
+    let body = $(%*{
+      "id": "msg_tackle_" & $n,
       "type": "message",
       "role": "assistant",
       "model": "anthropic/claude-haiku-4.5",
@@ -347,6 +361,34 @@ proc ambiguousObjectTerminatesUnscored() =
     if fileExists(p): removeFile(p)
   report "host+player round-trip terminates unscored on ambiguous model object with no numeric results"
 
+proc misplacedOnBallTackleTerminatesUnscored() =
+  let ep = runEpisode("onball-tackle", useMockSidecar = true, mmInvalidOnBallTackle)
+  doAssert ep.mockCalls == 1,
+    "misplaced on_ball=tackle fails on its sole request, got " & $ep.mockCalls
+  doAssert not fileExists(ep.resultsPath),
+    "misplaced on_ball=tackle must NOT write results.json or numeric scores"
+  doAssert fileExists(ep.failurePath),
+    "misplaced on_ball=tackle must write player_failure.json"
+  let failure = parseJson(readFile(ep.failurePath))
+  doAssert failure["failed_policy_index"].getInt == 0
+  doAssert failure["message"].getStr == "parse_error: invalid on_ball: \"tackle\"",
+    "unexpected failure message: " & failure["message"].getStr
+  let rep = verifyReplayHashChain(ep.replayPath)
+  doAssert rep.fallbacks.len == 1
+  doAssert rep.fallbacks[0]{"cause"}.getStr == "parse_error"
+  doAssert rep.fallbacks[0]{"detail"}.getStr == "invalid on_ball: \"tackle\""
+  for d in rep.directives:
+    doAssert d{"source"}.getStr != "fallback",
+      "zero synthesized fallback directives may be written"
+  doAssert rep.stops.len == 1 and rep.stops[0]{"reason"}.getStr == "fault"
+  doAssert not rep.resultNode.isNil
+  doAssert rep.resultNode["reason"].getStr == "fault"
+  doAssert not rep.resultNode.hasKey("scores")
+  doAssert not rep.resultNode.hasKey("win")
+  for p in [ep.resultsPath, ep.failurePath, ep.replayPath]:
+    if fileExists(p): removeFile(p)
+  report "host+player round-trip rejects misplaced on_ball=tackle with official GamePlayerFailure"
+
 proc providerFailureTerminatesUnscored() =
   let ep = runEpisode("provider", useMockSidecar = true, mmProviderFailure)
   doAssert ep.mockCalls == 1,
@@ -425,6 +467,7 @@ when isMainModule:
   validBareAndFencedRoundtrip()
   delayedJoinDoesNotFastForwardLobbyTimeout()
   ambiguousObjectTerminatesUnscored()
+  misplacedOnBallTackleTerminatesUnscored()
   providerFailureTerminatesUnscored()
   missingCredentialsTerminatesUnscored()
   echo "test_roundtrip ok"

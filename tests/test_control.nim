@@ -212,6 +212,45 @@ proc theKeeperPlaysAGoalKick() =
         $actionCode(b)
   report "the built-in keeper on the ball plays a goal kick, never a carry"
 
+proc offBallTackleModeExecutesSlide() =
+  ## A seated cog defending an opponent with the ball within TackleRadius emits
+  ## slide (action code 5) when `tackle == tkAuto`, and suppresses it when
+  ## `tackle == tkNever`. On the ball, `tackle` never emits a slide.
+  var sim = playing(testConfig())
+  let
+    seat = 0
+    defender = cogOfSeat(seat)
+    carrier = cogOfShirt(Blue, 10)
+  for i in 0 ..< CogCount:
+    sim.cogs[i].x = PitchXMax - 2_000_000'i32
+    sim.cogs[i].y = PitchYMax - 2_000_000'i32
+    sim.cogs[i].vx = 0
+    sim.cogs[i].vy = 0
+    sim.cogs[i].slideTicks = 0
+    sim.cogs[i].groundedTicks = 0
+  sim.cogs[defender].x = CentreX - 1_000_000'i32
+  sim.cogs[defender].y = CentreY
+  sim.cogs[carrier].x = CentreX
+  sim.cogs[carrier].y = CentreY
+  sim.ball.controller = int32(carrier)
+  sim.ball.x = CentreX
+  sim.ball.y = CentreY
+  sim.ball.dead = false
+
+  var order = emptyDirective(seat).cog
+  order.intent = inPress
+  order.onBall = obPassShort
+  order.tackle = tkAuto
+  let autoByte = sim.compileAction(defender, order)
+  doAssert actionCode(autoByte) == 5,
+    "off-ball tackle=auto must emit slide (code 5), got code " & $actionCode(autoByte)
+
+  order.tackle = tkNever
+  let neverByte = sim.compileAction(defender, order)
+  doAssert actionCode(neverByte) != 5,
+    "off-ball tackle=never must suppress slide (code 5)"
+  report "off-ball tackle=auto executes slide (code 5) and tackle=never suppresses it"
+
 proc aFullScriptedEpisodeIsCompleteAndLegal() =
   ## Acceptance checklist item 7, in ONE test: an all-scripted episode played to
   ## its NATURAL END, asserting both halves together. Split across two tests at
@@ -277,6 +316,7 @@ when isMainModule:
   restartForcesTheTakerIdle()
   chasingKeepsItsDirectionBits()
   theKeeperPlaysAGoalKick()
+  offBallTackleModeExecutesSlide()
   zonalBeatsGegenpress()
   aFullScriptedEpisodeIsCompleteAndLegal()
   echo "test_control ok"
