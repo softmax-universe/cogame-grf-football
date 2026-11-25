@@ -36,6 +36,7 @@ type
   PlayerThreadArgs = object
     url: string
     registration: string
+    connectDelayMs: int
 
 var
   mockLock: Lock
@@ -79,8 +80,9 @@ proc mockLlmHandler(request: Request) =
   of mmValidBareAndFence:
     let text =
       if n == 0:
-        # Bare JSON with optional auxiliary fields omitted (note, role, pass_to, sprint, tackle, say).
-        """{"cogs":[{"id":"RED-10","intent":"press","target":[4,2],"on_ball":"pass_short"}]}"""
+        # Bare JSON with optional metadata omitted (note, id, role, pass_to, sprint, tackle, say)
+        # and on_ball explicitly null (defaults to pass_short).
+        """{"cogs":[{"intent":"press","target":[4,2],"on_ball":null}]}"""
       else:
         # Single json-tagged markdown fence with optional fields present.
         "```json\n" &
@@ -117,6 +119,8 @@ proc mockServerThreadProc(args: MockServerArgs) {.thread.} =
   args.server[].serve(Port(args.port), "127.0.0.1")
 
 proc playerThreadProc(args: PlayerThreadArgs) {.thread.} =
+  if args.connectDelayMs > 0:
+    sleep(args.connectDelayMs)
   var socket: whisky.WebSocket
   var connected = false
   for _ in 0 ..< 80:
@@ -194,7 +198,9 @@ proc verifyReplayHashChain(replayPath: string):
 proc runEpisode(
   label: string,
   useMockSidecar: bool,
-  mode: MockMode
+  mode: MockMode,
+  lobbyJoinTimeoutTicks = DefaultLobbyJoinTimeoutTicks,
+  lastSeatDelayMs = 0
 ): tuple[
   resultsPath, failurePath, replayPath: string,
   mockCalls: int,
@@ -241,7 +247,8 @@ proc runEpisode(
              "scripted": "zonal", "policy": "zonal"})
     createThread(playerThreads[seat], playerThreadProc, PlayerThreadArgs(
       url: "ws://127.0.0.1:" & $gamePort & "/player?slot=" & $seat & "&token=tok-" & $seat,
-      registration: reg
+      registration: reg,
+      connectDelayMs: (if seat == SeatCount - 1: lastSeatDelayMs else: 0)
     ))
 
   var rt = RuntimeConfig(
@@ -250,10 +257,12 @@ proc runEpisode(
     resultsUri: "file://" & resultsPath,
     replayUri: "file://" & replayPath
   )
+  var cfg = roundtripConfig()
+  cfg.lobbyJoinTimeoutTicks = lobbyJoinTimeoutTicks
   runServerLoop(
     host = "127.0.0.1",
     port = gamePort,
-    initialConfig = roundtripConfig(),
+    initialConfig = cfg,
     saveReplayPath = replayPath,
     loadReplayPath = "",
     saveScoresPath = "",
@@ -388,9 +397,33 @@ proc missingCredentialsTerminatesUnscored() =
     if fileExists(p): removeFile(p)
   report "host+player round-trip terminates unscored on missing credentials with no numeric results"
 
+proc delayedJoinDoesNotFastForwardLobbyTimeout() =
+  ## With fastMode=true, early seats sending Ready must not fast-forward
+  ## lobbyWaitTimer while waiting for a late seat to connect.
+  ## 12 ticks at 24 Hz is ~500 ms; a 200 ms delay on seat 7 must succeed.
+  let ep = runEpisode(
+    "delayed-join",
+    useMockSidecar = true,
+    mmValidBareAndFence,
+    lobbyJoinTimeoutTicks = 12,
+    lastSeatDelayMs = 200
+  )
+  doAssert not fileExists(ep.failurePath),
+    "late seat within real 24 Hz lobby window must not trigger lobby join timeout"
+  doAssert fileExists(ep.resultsPath),
+    "episode with delayed seat must complete and write results.json"
+  let results = parseJson(readFile(ep.resultsPath))
+  doAssert results["reason"].getStr == "complete"
+  doAssert results["endRule"].getStr == "full_time"
+  discard verifyReplayHashChain(ep.replayPath)
+  for p in [ep.resultsPath, ep.failurePath, ep.replayPath]:
+    if fileExists(p): removeFile(p)
+  report "fastMode does not fast-forward lobby join timeout while waiting for late seats"
+
 when isMainModule:
   echo "test_roundtrip"
   validBareAndFencedRoundtrip()
+  delayedJoinDoesNotFastForwardLobbyTimeout()
   ambiguousObjectTerminatesUnscored()
   providerFailureTerminatesUnscored()
   missingCredentialsTerminatesUnscored()

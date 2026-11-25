@@ -896,7 +896,12 @@ proc runServerLoop*(
         break
 
       let limiterStart = getMonoTime()
-      discard runFrameLimiter(lastTick, not replayLoaded and config.fastMode,
+      # Never fast-forward lobby ticks while waiting for seats to join:
+      # otherwise an early seat sending Ready would advance lobbyWaitTimer at
+      # ~1 kHz instead of 24 Hz and prematurely time out later seats.
+      let allowFastMode = not replayLoaded and config.fastMode and
+        (sim.phase != Lobby or sim.lobbyIsStarting())
+      discard runFrameLimiter(lastTick, allowFastMode,
         sockets, playerIndices, sim.players.len)
       limiterMs += int((getMonoTime() - limiterStart).inMilliseconds)
 

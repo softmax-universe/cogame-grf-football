@@ -41,12 +41,19 @@ proc bareAndSingleFenceParse() =
   doAssert b.ok, "json-tagged fence parses: " & b.error
   doAssert b.directive.cog.onBall == obShoot
 
-  let plainFenced = "```\n{\"cogs\":[{\"id\":\"RED-9\",\"intent\":\"shadow\"," &
-    "\"target\":[1,1],\"on_ball\":\"hold\"}]}\n```"
+  let plainFenced = "```\n{\"cogs\":[{\"intent\":\"shadow\"," &
+    "\"target\":[1,1],\"on_ball\":null}]}\n```"
   let c = parse(sim, 2, plainFenced)
-  doAssert c.ok, "plain fence parses: " & c.error
+  doAssert c.ok, "plain fence with omitted id and null on_ball parses: " & c.error
   doAssert c.directive.cog.intent == inShadow
+  doAssert c.directive.cog.onBall == obPassShort, "null on_ball defaults to pass_short"
   doAssert c.directive.note == "", "omitted note defaults to empty"
+
+  let minimal = "{\"cogs\":[{\"intent\":\"hold_shape\",\"target\":[0,0]}]}"
+  let d = parse(sim, 2, minimal)
+  doAssert d.ok, "omitted id and on_ball parse cleanly: " & d.error
+  doAssert d.directive.cog.intent == inHoldShape
+  doAssert d.directive.cog.onBall == obPassShort, "omitted on_ball defaults to pass_short"
   report "bare JSON and single plain/json outer fences parse with optional defaults"
 
 proc proseAndExtraObjectsRejected() =
@@ -145,9 +152,9 @@ proc unknownEnumsRejected() =
     "{\"cogs\":[{\"id\":\"RED-9\",\"target\":[0,0],\"on_ball\":\"pass_short\"}]}",
     "missing intent")
   mustRejectDirective(sim, 2,
-    "{\"cogs\":[{\"id\":\"RED-9\",\"intent\":\"press\",\"target\":[0,0]}]}",
-    "missing on_ball")
-  report "unknown or missing required enums are rejected"
+    "{\"cogs\":[{\"id\":\"RED-9\",\"intent\":\"press\",\"target\":[0,0],\"on_ball\":42}]}",
+    "non-string on_ball")
+  report "unknown or invalid enums and missing required intent are rejected"
 
 proc passToAndIdValidationStrict() =
   var sim = playing(testConfig())

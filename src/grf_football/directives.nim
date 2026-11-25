@@ -264,8 +264,9 @@ proc parseDirective*(
 ): tuple[directive: Directive, ok: bool, error: string] =
   ## Validates one reply into a legal directive. Rejects unknown keys, legacy
   ## shapes, unmatched shirt ids, invalid enums, and missing or out-of-pitch
-  ## targets. Optional fields (`note`, `role`, `pass_to`, `sprint`, `tackle`,
-  ## `say`) keep their documented defaults when omitted or null.
+  ## targets. Optional fields (`note`, `id`, `role`, `on_ball`, `pass_to`,
+  ## `sprint`, `tackle`, `say`) keep their documented defaults when omitted or
+  ## null.
   template reject(msg: string): untyped =
     return (Directive(), false, msg)
 
@@ -295,13 +296,15 @@ proc parseDirective*(
       reject("unexpected cog field: " & key)
 
   let index = cogOfSeat(seat)
-  if not body.hasKey("id") or body["id"].kind != JString:
-    reject("cogs[0].id must be a string")
-  if cogIndexOfId(body["id"].getStr()) != index:
-    reject("cogs[0].id must match " & cogId(index))
+  if body.hasKey("id") and body["id"].kind != JNull:
+    if body["id"].kind != JString:
+      reject("cogs[0].id must be a string")
+    if cogIndexOfId(body["id"].getStr()) != index:
+      reject("cogs[0].id must match " & cogId(index))
 
   var order = CogOrder(
     role: SeatRole[seat],
+    onBall: obPassShort,
     passTo: -1'i32,
     sprint: spAuto,
     tackle: tkAuto,
@@ -329,9 +332,10 @@ proc parseDirective*(
   order.targetX = worldXOfView(vx)
   order.targetY = worldYOfView(vy)
 
-  if not body.hasKey("on_ball") or body["on_ball"].kind != JString or
-      not parseOnBall(body["on_ball"].getStr(), order.onBall):
-    reject("invalid or missing on_ball")
+  if body.hasKey("on_ball") and body["on_ball"].kind != JNull:
+    if body["on_ball"].kind != JString or
+        not parseOnBall(body["on_ball"].getStr(), order.onBall):
+      reject("invalid on_ball")
 
   if body.hasKey("pass_to") and body["pass_to"].kind != JNull:
     if body["pass_to"].kind != JString:

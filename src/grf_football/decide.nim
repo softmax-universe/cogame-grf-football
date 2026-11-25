@@ -27,17 +27,19 @@ until it recovers.
 
 const ReplyRules = """Reply with a single JSON object and NOTHING else.
 Schema:
-{"note":"<=160 chars",
- "cogs":[{"id":"<your shirt id>",
-          "role":"striker|winger|playmaker|anchor",
+{"note":"<=160 chars (optional)",
+ "cogs":[{"id":"<your shirt id> (optional)",
+          "role":"striker|winger|playmaker|anchor (optional)",
           "intent":"press|hold_shape|make_run|support|drop_deep|carry|switch_play|shadow",
           "target":[x,y],
-          "on_ball":"shoot|pass_short|pass_long|pass_high|dribble|hold",
-          "pass_to":"<teammate shirt id or null>",
-          "sprint":"auto|always|never",
-          "tackle":"auto|never",
-          "say":"<=48 chars"}]}
-Exactly one entry, for the shirt you control.
+          "on_ball":"shoot|pass_short|pass_long|pass_high|dribble|hold (optional)",
+          "pass_to":"<teammate shirt id or null> (optional)",
+          "sprint":"auto|always|never (optional)",
+          "tackle":"auto|never (optional)",
+          "say":"<=48 chars (optional)"}]}
+Required: cogs (exact length 1) with intent and target.
+Optional fields may be omitted or null (defaults: id = your shirt, role = your seat role,
+on_ball = "pass_short", pass_to = null, sprint = "auto", tackle = "auto", note/say = "").
 Intents: press = close down whoever has the ball; hold_shape = hold your target and
 face the ball; make_run = run into space ahead of the ball on your side; support =
 offer a short passing option beside the ball; drop_deep = come back toward your own
@@ -45,8 +47,9 @@ goal to receive; carry = go get the ball and run with it; switch_play = move to 
 far side of the pitch; shadow = mark the nearest opponent.
 target is metres: x in [-42,42], y in [-27,27]. It is used directly by hold_shape and
 as a bias by everything else.
-on_ball is what you do when the ball is at YOUR feet; the controller ignores an
-illegal choice (a shot from 60 metres, a pass to nobody) and plays the safe option."""
+on_ball is what you do when the ball is at YOUR feet (defaults to pass_short if omitted
+or null); the controller ignores an illegal choice (a shot from 60 metres, a pass to
+nobody) and plays the safe option."""
 
 proc systemMessage*(selection: PromptSelection): string =
   result = selection.introduction() & "\n"
