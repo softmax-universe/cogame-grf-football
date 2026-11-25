@@ -96,7 +96,10 @@ manifest = {
             "type": "game",
             "image": IMAGE,
             "run": ["/bin/grf-football"],
-            "env": {},
+            "env": {
+                "COWORLD_LLM_ENABLED": "true",
+                "COWORLD_LLM_MODEL": "anthropic/claude-haiku-4.5",
+            },
             "source_url": REPO + "/tree/main",
         },
         "replay_viewer": {"bundle": "static-replay-viewer"},
@@ -235,6 +238,7 @@ manifest = {
             "run": ["/bin/grf-football-player"],
             "env": {
                 "COWORLD_LLM_ENABLED": "true",
+                "COWORLD_LLM_MODEL": "anthropic/claude-haiku-4.5",
                 "PLAYER_PROMPT": (
                     "Play smart team football for your shirt using the match "
                     "view. Support teammates in possession, press when "
@@ -253,10 +257,10 @@ manifest = {
             "id": "baseline",
             "name": "GRF Football Zonal Baseline",
             "description": (
-                "The bundled certification seat: registers as the scripted "
+                "Explicit scripted baseline seat: registers as the scripted "
                 "`zonal` baseline (hold the zone, support the ball, press when "
-                "it is close, go and win a loose ball) so an episode always "
-                "completes without LLM credentials."
+                "it is close, go and win a loose ball) for deterministic "
+                "opponents and offline scripted tests without LLM credentials."
             ),
             "type": "player",
             "image": IMAGE,
@@ -281,9 +285,13 @@ manifest = {
                 2880, 1440, 400),
     ],
     "certification": {
-        "players": [{"player_id": "baseline"} for _ in range(SEATS)],
+        "players": [{"player_id": "model"}] + [
+            {"player_id": "baseline"} for _ in range(SEATS - 1)
+        ],
         "game_config": {
-            "players": [{"name": "Zonal %d" % (i + 1)} for i in range(SEATS)],
+            "players": [{"name": "Model 1"}] + [
+                {"name": "Zonal %d" % i} for i in range(1, SEATS)
+            ],
             "slots": SLOTS,
             "num_agents": SEATS,
             "minPlayers": SEATS,
