@@ -1,17 +1,17 @@
 ## Directives: the order a seat plays for one 240-tick decision turn, its
-## tolerant parser/repairer, and the view-coordinate transform every policy
-## sees the world through.
+## strict parser, and the view-coordinate transform every policy sees the world
+## through.
 ##
 ## Two hard rules live here and are pinned by tests/test_directives.nim:
 ##
 ## 1. **Every recorded string is truncated on RUNE boundaries, never bytes.**
 ##    A byte-truncated multi-byte character is exactly the bug that makes
 ##    replay bytes render in a browser but fail a strict parser.
-## 2. **Parsing is tolerant and never fails hard.** Markdown fences, prose
-##    prefixes, an id-keyed `cogs` object, numeric strings, unknown enums,
-##    out-of-pitch targets, extra entries, zero entries — all repair. Only when
-##    no object with a usable entry can be recovered do the retry and then the
-##    scripted fallback fire.
+## 2. **Parsing is strict.** Replies must match the documented JSON schema with
+##    exactly one cog entry for the seat's own shirt, valid enums, and finite
+##    in-pitch numeric target coordinates. Optional fields keep their documented
+##    defaults when omitted, but invalid values, unknown fields, and legacy
+##    shapes are rejected rather than silently repaired.
 
 import
   std/[json, math, strutils, unicode],
@@ -71,23 +71,21 @@ proc clipRunes*(text: string, maxRunes: int): string =
 # --------------------------------------------------------------------------
 
 proc cogIndexOfId*(id: string): int =
-  ## `RED-1`..`RED-11` / `BLUE-1`..`BLUE-11`, case-insensitive,
-  ## separator-tolerant. -1 when the token names no shirt.
-  let text = clipRunes(id, MaxCogIdRunes).toUpperAscii()
-  var digits = ""
-  var prefix = ""
-  for ch in text:
-    if ch in {'A' .. 'Z'}:
-      if prefix.len < 4: prefix.add(ch)
-    elif ch in {'0' .. '9'}:
-      digits.add(ch)
-  if digits.len == 0:
+  ## Strict `RED-1`..`RED-11` / `BLUE-1`..`BLUE-11` (case-insensitive team
+  ## prefix, single `-`, no leading zero). -1 when the token names no shirt.
+  let text = id.strip().toUpperAscii()
+  let cut = text.find('-')
+  if cut <= 0 or cut == text.high:
     return -1
-  var shirt: int
-  try:
-    shirt = parseInt(digits)
-  except ValueError:
+  let
+    prefix = text[0 ..< cut]
+    digits = text[cut + 1 .. ^1]
+  if digits.len == 0 or digits.len > 2 or digits[0] == '0':
     return -1
+  for ch in digits:
+    if ch notin {'0' .. '9'}:
+      return -1
+  let shirt = parseInt(digits)
   if shirt < 1 or shirt > CogsPerTeam:
     return -1
   case prefix
@@ -96,45 +94,51 @@ proc cogIndexOfId*(id: string): int =
   else: -1
 
 # --------------------------------------------------------------------------
-# Enum repair
+# Strict enum parsers
 # --------------------------------------------------------------------------
 
-proc roleOfText*(text: string, fallback: Role): Role =
+proc parseRole(text: string, value: var Role): bool =
   case text.strip().toLowerAscii()
-  of "striker": roleStriker
-  of "winger": roleWinger
-  of "playmaker": rolePlaymaker
-  of "anchor": roleAnchor
-  else: fallback        ## the documented repair: the shirt's table role.
+  of "striker": value = roleStriker; true
+  of "winger": value = roleWinger; true
+  of "playmaker": value = rolePlaymaker; true
+  of "anchor": value = roleAnchor; true
+  else: false
 
-proc intentOfText*(text: string): Intent =
+proc parseIntent(text: string, value: var Intent): bool =
   case text.strip().toLowerAscii()
-  of "press": inPress
-  of "hold_shape": inHoldShape
-  of "make_run": inMakeRun
-  of "drop_deep": inDropDeep
-  of "carry": inCarry
-  of "switch_play": inSwitchPlay
-  of "shadow": inShadow
-  else: inSupport       ## the documented repair for an unknown intent.
+  of "press": value = inPress; true
+  of "hold_shape": value = inHoldShape; true
+  of "make_run": value = inMakeRun; true
+  of "support": value = inSupport; true
+  of "drop_deep": value = inDropDeep; true
+  of "carry": value = inCarry; true
+  of "switch_play": value = inSwitchPlay; true
+  of "shadow": value = inShadow; true
+  else: false
 
-proc onBallOfText*(text: string): OnBall =
+proc parseOnBall(text: string, value: var OnBall): bool =
   case text.strip().toLowerAscii()
-  of "shoot": obShoot
-  of "pass_long": obPassLong
-  of "pass_high": obPassHigh
-  of "dribble": obDribble
-  of "hold": obHold
-  else: obPassShort     ## the documented repair for an unknown on_ball.
+  of "shoot": value = obShoot; true
+  of "pass_short": value = obPassShort; true
+  of "pass_long": value = obPassLong; true
+  of "pass_high": value = obPassHigh; true
+  of "dribble": value = obDribble; true
+  of "hold": value = obHold; true
+  else: false
 
-proc sprintOfText*(text: string): SprintMode =
+proc parseSprint(text: string, value: var SprintMode): bool =
   case text.strip().toLowerAscii()
-  of "always": spAlways
-  of "never": spNever
-  else: spAuto
+  of "auto": value = spAuto; true
+  of "always": value = spAlways; true
+  of "never": value = spNever; true
+  else: false
 
-proc tackleOfText*(text: string): TackleMode =
-  if text.strip().toLowerAscii() == "never": tkNever else: tkAuto
+proc parseTackle(text: string, value: var TackleMode): bool =
+  case text.strip().toLowerAscii()
+  of "auto": value = tkAuto; true
+  of "never": value = tkNever; true
+  else: false
 
 # --------------------------------------------------------------------------
 # Directive construction and serialization
@@ -232,127 +236,131 @@ proc capRecord*(text: string): string =
   clipRunes(text, MaxDirectiveRecordRunes)
 
 # --------------------------------------------------------------------------
-# The tolerant parser
+# Strict directive parser
 # --------------------------------------------------------------------------
 
-proc numberOf(node: JsonNode, ok: var bool): float =
-  ## Accepts a JSON number OR a numeric string; anything else, or a non-finite
-  ## value, reports `ok = false`.
-  ok = false
+proc finiteNumberOf(node: JsonNode, value: var float): bool =
+  ## Accepts only a finite JSON number (never numeric strings).
   if node.isNil:
-    return 0.0
+    return false
   case node.kind
   of JInt:
-    ok = true
-    return float(node.getInt())
+    value = float(node.getInt())
+    true
   of JFloat:
-    let value = node.getFloat()
-    if value != value or value == Inf or value == NegInf:
-      return 0.0
-    ok = true
-    return value
-  of JString:
-    try:
-      let value = parseFloat(node.getStr().strip())
-      if value != value or value == Inf or value == NegInf:
-        return 0.0
-      ok = true
-      return value
-    except ValueError:
-      return 0.0
+    let v = node.getFloat()
+    if v != v or v == Inf or v == NegInf:
+      return false
+    value = v
+    true
   else:
-    return 0.0
-
-proc entriesOf(node: JsonNode): seq[tuple[id: string, body: JsonNode]] =
-  ## `cogs` may arrive as an array of objects, as a single bare object, or as
-  ## an object keyed by shirt id. All three reduce to (id, body) pairs; the id
-  ## inside the body wins.
-  if node.isNil:
-    return
-  case node.kind
-  of JArray:
-    for entry in node:
-      if entry.kind == JObject:
-        result.add((entry{"id"}.getStr(), entry))
-  of JObject:
-    if node.hasKey("intent") or node.hasKey("role") or node.hasKey("target"):
-      # A bare order object, not a map of them.
-      return @[(node{"id"}.getStr(), node)]
-    for key, entry in node:
-      if entry.kind == JObject:
-        let inner = entry{"id"}.getStr()
-        let useId = if inner.len > 0: inner else: key
-        result.add((useId, entry))
-  else:
-    discard
+    false
 
 proc parseDirective*(
   sim: SimServer,
   seat: int,
   payload: JsonNode,
-  previous: Directive,
-  hasPrevious: bool,
-  fallback: Directive,
   turn: int
-): tuple[directive: Directive, usable: bool] =
-  ## Repairs one reply into a legal directive. `usable` is false when no cog
-  ## entry could be recovered at all — the only case that triggers the retry.
+): tuple[directive: Directive, ok: bool, error: string] =
+  ## Validates one reply into a legal directive. Rejects unknown keys, legacy
+  ## shapes, unmatched shirt ids, invalid enums, and missing or out-of-pitch
+  ## targets. Optional fields (`note`, `role`, `pass_to`, `sprint`, `tackle`,
+  ## `say`) keep their documented defaults when omitted or null.
+  template reject(msg: string): untyped =
+    return (Directive(), false, msg)
+
+  if payload.isNil or payload.kind != JObject:
+    reject("directive must be a JSON object")
+  for key, _ in payload:
+    if key notin ["note", "cogs"]:
+      reject("unexpected top-level field: " & key)
+
+  var note = ""
+  if payload.hasKey("note") and payload["note"].kind != JNull:
+    if payload["note"].kind != JString:
+      reject("note must be a string")
+    note = clipRunes(payload["note"].getStr(), MaxNoteRunes)
+
+  if not payload.hasKey("cogs") or payload["cogs"].kind != JArray:
+    reject("cogs must be an array")
+  let cogsNode = payload["cogs"]
+  if cogsNode.len != 1:
+    reject("cogs must contain exactly one entry")
+  let body = cogsNode[0]
+  if body.kind != JObject:
+    reject("cogs[0] must be an object")
+  for key, _ in body:
+    if key notin ["id", "role", "intent", "target", "on_ball", "pass_to",
+        "sprint", "tackle", "say"]:
+      reject("unexpected cog field: " & key)
+
   let index = cogOfSeat(seat)
-  var directive = fallback
-  directive.turn = int32(turn)
-  directive.half = sim.half
-  directive.source = dsLlm
-  directive.note = clipRunes(payload{"note"}.getStr(), MaxNoteRunes)
+  if not body.hasKey("id") or body["id"].kind != JString:
+    reject("cogs[0].id must be a string")
+  if cogIndexOfId(body["id"].getStr()) != index:
+    reject("cogs[0].id must match " & cogId(index))
 
-  var entries = entriesOf(payload{"cogs"})
-  if entries.len == 0:
-    entries = entriesOf(payload{"cog"})
-  var usable = false
-  for entry in entries:
-    # A seat commands exactly one shirt, so the FIRST usable entry wins and
-    # every extra entry is dropped. An id naming another shirt is assigned to
-    # this seat's shirt by position, which is the documented repair.
-    if usable:
-      break
-    let body = entry.body
-    var order = CogOrder()
-    order.role = roleOfText(body{"role"}.getStr(), SeatRole[seat])
-    order.intent = intentOfText(body{"intent"}.getStr())
-    order.onBall = onBallOfText(body{"on_ball"}.getStr())
-    order.sprint = sprintOfText(body{"sprint"}.getStr("auto"))
-    order.tackle = tackleOfText(body{"tackle"}.getStr("auto"))
-    order.say = clipRunes(body{"say"}.getStr(), MaxSayRunes)
-    # target: two finite numbers, clamped into the pitch; anything else falls
-    # back to the cog's CURRENT position.
-    var okX = false
-    var okY = false
-    var vx = 0.0
-    var vy = 0.0
-    let target = body{"target"}
-    if not target.isNil and target.kind == JArray and target.len >= 2:
-      vx = numberOf(target[0], okX)
-      vy = numberOf(target[1], okY)
-    elif not target.isNil and target.kind == JObject:
-      vx = numberOf(target{"x"}, okX)
-      vy = numberOf(target{"y"}, okY)
-    if okX and okY:
-      order.targetX = worldXOfView(vx)
-      order.targetY = worldYOfView(vy)
-    else:
-      order.targetX = sim.cogs[index].x
-      order.targetY = sim.cogs[index].y
-    # pass_to: a TEAMMATE shirt that is not this cog; anything else is null.
-    order.passTo = -1
-    let passNode = body{"pass_to"}
-    if not passNode.isNil and passNode.kind == JString:
-      let mate = cogIndexOfId(passNode.getStr())
-      if mate >= 0 and mate != index and
-          teamOfCog(mate) == teamOfSeat(seat):
-        order.passTo = int32(mate)
-    directive.cog = order
-    usable = true
+  var order = CogOrder(
+    role: SeatRole[seat],
+    passTo: -1'i32,
+    sprint: spAuto,
+    tackle: tkAuto,
+    say: ""
+  )
 
-  if not usable:
-    # A missing entry keeps last turn's order, else the scripted fallback's.
-    directive.cog = if hasPrevious: previous.cog else: fallback.cog
-  (directive, usable)
+  if body.hasKey("role") and body["role"].kind != JNull:
+    if body["role"].kind != JString or
+        not parseRole(body["role"].getStr(), order.role):
+      reject("invalid role")
+
+  if not body.hasKey("intent") or body["intent"].kind != JString or
+      not parseIntent(body["intent"].getStr(), order.intent):
+    reject("invalid or missing intent")
+
+  if not body.hasKey("target") or body["target"].kind != JArray or
+      body["target"].len != 2:
+    reject("target must be a [x, y] array")
+  var vx, vy = 0.0
+  if not finiteNumberOf(body["target"][0], vx) or
+      not finiteNumberOf(body["target"][1], vy):
+    reject("target coordinates must be finite numbers")
+  if vx < -ViewHalfW or vx > ViewHalfW or vy < -ViewHalfH or vy > ViewHalfH:
+    reject("target coordinates out of pitch bounds")
+  order.targetX = worldXOfView(vx)
+  order.targetY = worldYOfView(vy)
+
+  if not body.hasKey("on_ball") or body["on_ball"].kind != JString or
+      not parseOnBall(body["on_ball"].getStr(), order.onBall):
+    reject("invalid or missing on_ball")
+
+  if body.hasKey("pass_to") and body["pass_to"].kind != JNull:
+    if body["pass_to"].kind != JString:
+      reject("pass_to must be a teammate id string or null")
+    let mate = cogIndexOfId(body["pass_to"].getStr())
+    if mate < 0 or mate == index or teamOfCog(mate) != teamOfSeat(seat):
+      reject("pass_to must name a teammate shirt")
+    order.passTo = int32(mate)
+
+  if body.hasKey("sprint") and body["sprint"].kind != JNull:
+    if body["sprint"].kind != JString or
+        not parseSprint(body["sprint"].getStr(), order.sprint):
+      reject("invalid sprint mode")
+
+  if body.hasKey("tackle") and body["tackle"].kind != JNull:
+    if body["tackle"].kind != JString or
+        not parseTackle(body["tackle"].getStr(), order.tackle):
+      reject("invalid tackle mode")
+
+  if body.hasKey("say") and body["say"].kind != JNull:
+    if body["say"].kind != JString:
+      reject("say must be a string")
+    order.say = clipRunes(body["say"].getStr(), MaxSayRunes)
+
+  var directive = Directive(
+    turn: int32(turn),
+    half: sim.half,
+    source: dsLlm,
+    note: note,
+    cog: order
+  )
+  (directive, true, "")

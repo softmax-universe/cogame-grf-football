@@ -222,7 +222,7 @@ proc applyRecord*(sim: var SimServer, text: string) =
       text: "seat fell back (" & node{"cause"}.getStr() & ")")
   of "budget_guard":
     sim.feed.add FeedLine(tick: int32(sim.tickCount), kind: "fallback",
-      team: -1, text: "decision budget guard: scripted for the rest")
+      team: -1, text: "decision budget guard: LLM seats idle for the rest")
   of "stop":
     # THE ONE RECORD THAT MOVES THE SIM. A wall-clock stop and a host error are
     # wall-clock facts: no amount of sim state implies them, so the server

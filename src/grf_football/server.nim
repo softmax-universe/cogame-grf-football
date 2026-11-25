@@ -390,21 +390,45 @@ proc registrationOf*(
   let parsed = parseRegistration(text)
   if not parsed.ok:
     return (false, previous, "")
+  for key, _ in parsed.node:
+    if key notin ["type", "prompt", "scripted", "policy"]:
+      return (false, previous, "")
+  let promptNode = parsed.node{"prompt"}
+  if not promptNode.isNil and promptNode.kind notin {JNull, JString}:
+    return (false, previous, "")
+  let scriptedNode = parsed.node{"scripted"}
+  if not scriptedNode.isNil and scriptedNode.kind notin {JNull, JString}:
+    return (false, previous, "")
+  let policyNode = parsed.node{"policy"}
+  if not policyNode.isNil and policyNode.kind notin {JNull, JString}:
+    return (false, previous, "")
   var policy = SeatPolicy(connected: true)
-  let prompt = clipRunes(parsed.node{"prompt"}.getStr(), MaxPromptRunes)
-  let scripted = parsed.node{"scripted"}
-  let label = clipRunes(parsed.node{"policy"}.getStr(), MaxPolicyRunes)
+  let prompt =
+    if not promptNode.isNil and promptNode.kind == JString:
+      clipRunes(promptNode.getStr(), MaxPromptRunes)
+    else: ""
+  let scriptedRaw =
+    if not scriptedNode.isNil and scriptedNode.kind == JString:
+      scriptedNode.getStr().strip().toLowerAscii()
+    else: ""
+  let label =
+    if not policyNode.isNil and policyNode.kind == JString:
+      clipRunes(policyNode.getStr(), MaxPolicyRunes)
+    else: ""
+  if prompt.len > 0 and scriptedRaw.len > 0:
+    return (false, previous, "")
   if prompt.len > 0:
     policy.kind = pkLlm
     policy.prompt = prompt
     policy.baseline = ""
   else:
     policy.kind = pkScripted
-    policy.baseline =
-      if scripted.kind == JString and scripted.getStr().len > 0:
-        scripted.getStr()
-      else:
-        "zonal"
+    if scriptedRaw.len == 0:
+      policy.baseline = "zonal"
+    elif scriptedRaw in ["zonal", "gegenpress"]:
+      policy.baseline = scriptedRaw
+    else:
+      return (false, previous, "")
   policy.label = if label.len > 0: label else: policyKindText(policy.kind)
   # The player re-sends its registration once after the first frame (in case
   # the first send raced the slot registration), so only an ACTUAL change earns

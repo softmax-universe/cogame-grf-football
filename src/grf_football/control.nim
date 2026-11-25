@@ -202,7 +202,10 @@ proc compileActions*(
     var action: uint8
     let seat = sim.seatOfCog(i)
     if seat >= 0:
-      action = sim.compileAction(i, directives[seat].cog)
+      if directives[seat].source == dsFallback:
+        action = 0'u8
+      else:
+        action = sim.compileAction(i, directives[seat].cog)
     else:
       action = sim.builtinAction(i)
     if restarting:

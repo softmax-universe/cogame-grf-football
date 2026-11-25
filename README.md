@@ -61,10 +61,12 @@ docker run --rm -e COWORLD_PLAYER_WS_URL=ws://game:8080/player?slot=1 \
   coworld-grf-football:latest /bin/grf-football-player
 ```
 
-`zonal` is the reference baseline (hold the zone, support the ball, press when
-it is close) and also the fallback whenever a decision call fails twice.
-`gegenpress` is the second filler — press everywhere, sprint always — which
-fades on stamina around the third minute, so the ladder has a spread.
+`zonal` is the reference scripted baseline (hold the zone, support the ball,
+press when it is close). `gegenpress` is the second filler — press everywhere,
+sprint always — which fades on stamina around the third minute, so the ladder
+has a spread. When an LLM seat fails both attempts on a turn (or has no
+credentials / hits the budget guard), it records a `fallback` failure and holds
+idle (`0x00`) for that turn rather than running a scripted policy.
 
 ## Watching
 

@@ -134,7 +134,7 @@ proc newLlmClient*(config: GameConfig): LlmClient =
   else:
     result.transport = ltNone
     result.disabled = true
-    echo "grf-football llm: no LLM credentials; using scripted fallback"
+    echo "grf-football llm: no LLM credentials; LLM seats will hold idle"
 
 proc requestFor*(client: LlmClient, system, user: string, slot: int): LlmRequest =
   ## Builds one prepared call. Body shape copied from babel as is:
@@ -218,17 +218,35 @@ proc completionText*(client: LlmClient, code: int, body: string): string =
       "any JSON: " & errorDetail(result, 160))
 
 proc extractJsonObject*(text: string): JsonNode =
-  ## Pulls the outermost `{...}` object out of a model response, tolerating
-  ## markdown fences and a prose prefix (babel's, ported unchanged).
-  let
-    start = text.find('{')
-    stop = text.rfind('}')
-  if start < 0 or stop <= start:
-    let head = errorDetail(text, 160)
+  ## Parses a single JSON object from a model response: either bare JSON or
+  ## wrapped in one ordinary outer Markdown code fence (plain or `json`-tagged).
+  ## Rejects surrounding prose, extra objects, unsupported fence tags, and
+  ## non-object JSON.
+  var body = text.strip()
+  if body.len == 0:
+    raise newException(GrfFootballError, "empty JSON response")
+  if body.startsWith("```"):
+    let firstNl = body.find('\n')
+    if firstNl < 0:
+      raise newException(GrfFootballError,
+        "unterminated code fence: " & errorDetail(text, 160))
+    let lang = body[3 ..< firstNl].strip().toLowerAscii()
+    if lang.len > 0 and lang != "json":
+      raise newException(GrfFootballError,
+        "unsupported code fence language: " & errorDetail(lang, 40))
+    let lastNl = body.rfind('\n')
+    if lastNl <= firstNl:
+      raise newException(GrfFootballError,
+        "unterminated code fence: " & errorDetail(text, 160))
+    if body[lastNl + 1 .. ^1].strip() != "```":
+      raise newException(GrfFootballError,
+        "unexpected text after code fence: " & errorDetail(text, 160))
+    body = body[firstNl + 1 ..< lastNl].strip()
+  try:
+    result = parseJson(body)
+  except CatchableError:
     raise newException(GrfFootballError,
-      "no JSON object in response: " & head)
-  # `start`/`stop` are the byte offsets of an ASCII `{` and `}`. In valid UTF-8
-  # an ASCII byte never occurs inside a multi-byte sequence, so this slice is on
-  # rune boundaries by construction — and it goes to the JSON parser, not to the
-  # replay.
-  parseJson(text[start .. stop])
+      "invalid JSON object in response: " & errorDetail(text, 160))
+  if result.kind != JObject:
+    raise newException(GrfFootballError,
+      "expected a JSON object: " & errorDetail(text, 160))

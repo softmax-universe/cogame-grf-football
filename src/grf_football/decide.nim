@@ -1,5 +1,5 @@
 ## The turn engine: one decision every 240 ticks, ALL EIGHT SEATS issued as ONE
-## parallel batch, two bounded attempts, then the scripted fallback.
+## parallel batch, two bounded attempts, then neutral idle fallback.
 ##
 ## Timing (docs/RULES.md §Budget):
 ##   attempt 1 batch deadline   6.0 s   (config attempt1Ms)
@@ -37,7 +37,7 @@ ball and lie grounded for two seconds. Sprinting drains stamina; low stamina slo
 until it recovers.
 """
 
-const ReplyRules = """Reply with a single JSON object and NOTHING else. Your reply MUST begin with '{'.
+const ReplyRules = """Reply with a single JSON object and NOTHING else.
 Schema:
 {"note":"<=160 chars",
  "cogs":[{"id":"<your shirt id>",
@@ -444,7 +444,7 @@ proc turn*(
       "remaining_s": budget - elapsedSeconds
     })
     echo "grf-football: budget guard at turn ", turnIndex,
-      "; falling back to the scripted layer for the rest of the match"
+      "; LLM seats will hold idle for the rest of the match"
 
   var
     resolved: array[SeatCount, Directive]
@@ -544,17 +544,15 @@ proc turn*(
       else:
         try:
           let payload = extractJsonObject(reply.text)
-          let parsed = parseDirective(sim, seat, payload,
-            engine.previous[seat], engine.hasPrevious[seat],
-            sim.zonalDirective(seat, turnIndex), turnIndex)
-          if parsed.usable:
+          let parsed = parseDirective(sim, seat, payload, turnIndex)
+          if parsed.ok:
             resolved[seat] = parsed.directive
             resolved[seat].latencyMs = latency
             settled[seat] = true
             receipt.accepted = true
           else:
             cause = "parse_error"
-            detail = "no usable cog entry"
+            detail = parsed.error
         except CatchableError as failure:
           cause = "parse_error"
           detail = failure.msg
@@ -574,7 +572,7 @@ proc turn*(
     inc attempt
 
   for call in calls:
-    # Two consecutive failures: the seat plays `zonal` this turn.
+    # Two consecutive failures: the seat holds idle this turn.
     let seat = clamp(call.seat, 0, SeatCount - 1)
     resolved[seat] = engine.fallbackFor(sim, seat, turnIndex)
     settled[seat] = true

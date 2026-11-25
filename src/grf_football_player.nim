@@ -83,10 +83,17 @@ when isMainModule:
     prompt = getEnv("PLAYER_PROMPT").strip()
     scriptedEnv = getEnv("PLAYER_SCRIPTED").strip().toLowerAscii()
     label = getEnv("PLAYER_POLICY_LABEL").strip()
+  if prompt.len > 0 and scriptedEnv.len > 0:
+    quit("grf-football player: set either PLAYER_PROMPT or PLAYER_SCRIPTED, not both", 1)
   var scripted = ""
   if prompt.len == 0:
-    scripted = if scriptedEnv in ["zonal", "gegenpress"]: scriptedEnv
-               else: "zonal"
+    if scriptedEnv.len == 0:
+      scripted = "zonal"
+    elif scriptedEnv in ["zonal", "gegenpress"]:
+      scripted = scriptedEnv
+    else:
+      quit("grf-football player: unknown PLAYER_SCRIPTED=" & scriptedEnv &
+        " (expected zonal or gegenpress)", 1)
 
   let registration = $ %*{
     "type": "register",

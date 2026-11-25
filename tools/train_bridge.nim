@@ -1,6 +1,6 @@
 ## Complete football matches through the language decision protocol.
 import std/[json, os]
-import grf_football/[sim, roster, control, directives, baselines, decide, prompts]
+import grf_football/[sim, roster, control, directives, baselines, llm, decide, prompts]
 
 const OperatorPrompt = "Play your shirt using the match view and coordinate through the ball."
 
@@ -91,27 +91,37 @@ when isMainModule:
     of "step":
       doAssert state.phase != GameOver and request["decision_id"].getInt() == id
       let turn = state.gameTicksElapsed() div state.turnTicks()
-      let parsed = state.parseDirective(seat, parseJson(request["response"].getStr()),
-        engine.previous[seat], engine.hasPrevious[seat], state.zonalDirective(seat, turn), turn)
-      doAssert parsed.usable
-      pending[seat] = parsed.directive
-      let record = directiveJson(seat, parsed.directive)
-      let action = %*{"note": record["note"], "cogs": record["cogs"]}
-      inc id
-      inc seat
-      if seat == SeatCount:
-        for slot in 0 ..< SeatCount:
-          state.activeDirective[slot] = pending[slot]
-          state.hasDirective[slot] = true
-          engine.previous[slot] = pending[slot]
-          engine.hasPrevious[slot] = true
-        for index in 0 ..< CogCount: engine.lastCogStats[index] = state.cogStats[index]
-        for team in Team: engine.lastTeamStats[team] = state.teamStats[team]
-        engine.lastGoals.setLen(0)
-        state.advance(engine, previousActions, goals, turn)
-        seat = 0
-      response = %*{"kind": "accepted", "action": action,
-        "observation": state.observation(engine, seat, id)}
+      var payload: JsonNode
+      var rejectMsg = ""
+      try:
+        payload = extractJsonObject(request["response"].getStr())
+      except CatchableError as err:
+        rejectMsg = err.msg
+      if rejectMsg.len > 0:
+        response = %*{"kind": "rejected", "error": rejectMsg}
+      else:
+        let parsed = state.parseDirective(seat, payload, turn)
+        if not parsed.ok:
+          response = %*{"kind": "rejected", "error": parsed.error}
+        else:
+          pending[seat] = parsed.directive
+          let record = directiveJson(seat, parsed.directive)
+          let action = %*{"note": record["note"], "cogs": record["cogs"]}
+          inc id
+          inc seat
+          if seat == SeatCount:
+            for slot in 0 ..< SeatCount:
+              state.activeDirective[slot] = pending[slot]
+              state.hasDirective[slot] = true
+              engine.previous[slot] = pending[slot]
+              engine.hasPrevious[slot] = true
+            for index in 0 ..< CogCount: engine.lastCogStats[index] = state.cogStats[index]
+            for team in Team: engine.lastTeamStats[team] = state.teamStats[team]
+            engine.lastGoals.setLen(0)
+            state.advance(engine, previousActions, goals, turn)
+            seat = 0
+          response = %*{"kind": "accepted", "action": action,
+            "observation": state.observation(engine, seat, id)}
     else:
       raise newException(ValueError, "unknown bridge command")
     stdout.writeLine($response)
