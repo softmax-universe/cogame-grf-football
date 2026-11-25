@@ -26,6 +26,7 @@ const
   ViewHalfW* = 42.0
   ViewHalfH* = 27.0
   GoalHalfWidth* = 4.0
+  MaxInvalidOnBallRunes* = 80
 
 proc viewX*(x: int32): float {.inline.} =
   float(int(x) - int(CentreX)) / 1_000_000.0
@@ -335,7 +336,8 @@ proc parseDirective*(
   if body.hasKey("on_ball") and body["on_ball"].kind != JNull:
     if body["on_ball"].kind != JString or
         not parseOnBall(body["on_ball"].getStr(), order.onBall):
-      reject("invalid on_ball")
+      reject("invalid on_ball: " &
+        clipRunes($body["on_ball"], MaxInvalidOnBallRunes))
 
   if body.hasKey("pass_to") and body["pass_to"].kind != JNull:
     if body["pass_to"].kind != JString:
