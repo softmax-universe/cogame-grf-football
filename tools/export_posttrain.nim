@@ -70,9 +70,8 @@ when isMainModule:
             let record = directiveJson(seat, teacher)
             let completion = %*{"note": record["note"],
               "cogs": record["cogs"]}
-            let parsed = sim.parseDirective(seat, completion,
-              engine.previous[seat], engine.hasPrevious[seat], teacher, turn)
-            doAssert parsed.usable
+            let parsed = sim.parseDirective(seat, completion, turn)
+            doAssert parsed.ok, parsed.error
             doAssert directiveJson(seat, parsed.directive)["cogs"] ==
               completion["cogs"]
             let system = selection.systemMessage()

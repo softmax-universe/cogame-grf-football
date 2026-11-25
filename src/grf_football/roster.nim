@@ -119,15 +119,18 @@ proc roundDiv(a, b: int): int {.inline.} =
   if a >= 0: (2 * a + b) div (2 * b)
   else: -((2 * -a + b) div (2 * b))
 
+proc isScored*(sim: SimServer): bool {.inline.} =
+  ## Genuine completed or wall-clock-deadline games are scored; fault/aborted
+  ## episodes are never scored and never invent a winner or payoff.
+  sim.endReason != reasonFault
+
 proc scorePermille*(sim: SimServer, seat: int): int =
   ## `0.5 + 0.5 * clamp(gd / 3, -1, +1)`, in permille so the pair is exactly
   ## complementary. Higher is better; 3-0 or better = 1000, any draw = 500.
-  if sim.endReason == reasonFault:
-    return 500
   500 + clamp(roundDiv(sim.goalDiff(teamOfSeat(seat)) * 500, 3), -500, 500)
 
 proc seatWon*(sim: SimServer, seat: int): bool {.inline.} =
-  sim.endReason != reasonFault and sim.goalDiff(teamOfSeat(seat)) > 0
+  sim.isScored() and sim.goalDiff(teamOfSeat(seat)) > 0
 
 proc seatName*(sim: SimServer, seat: int): string =
   ## The REAL policy name (spectator side). Falls back to the configured slot
@@ -140,9 +143,10 @@ proc seatName*(sim: SimServer, seat: int): string =
   cogId(cogOfSeat(seat))
 
 proc playerResultsJson*(sim: SimServer): string =
-  ## The results artifact. Exactly the keys the manifest's `results_schema`
-  ## declares: per-seat arrays of length eight in seat order, team arrays of
-  ## length two in `[red, blue]` order.
+  ## The results artifact. For scored games (`complete`/`deadline`), carries
+  ## the exact keys the manifest's `results_schema` declares. For unscored
+  ## `fault` episodes, omits `scores` and `win` so no numeric score or invented
+  ## winner is ever emitted.
   var
     names = newJArray()
     scores = newJArray()
@@ -158,11 +162,13 @@ proc playerResultsJson*(sim: SimServer): string =
     fouls = newJArray()
     llmTurns = newJArray()
     fallbackTurns = newJArray()
+  let scored = sim.isScored()
   for seat in 0 ..< SeatCount:
     let index = cogOfSeat(seat)
     names.add(%sim.seatName(seat))
-    scores.add(%(float(sim.scorePermille(seat)) / 1000.0))
-    win.add(%sim.seatWon(seat))
+    if scored:
+      scores.add(%(float(sim.scorePermille(seat)) / 1000.0))
+      win.add(%sim.seatWon(seat))
     team.add(%teamText(teamOfSeat(seat)))
     shirt.add(%int(SeatShirt[seat]))
     goals.add(%int(sim.cogStats[index].goals))
@@ -184,10 +190,8 @@ proc playerResultsJson*(sim: SimServer): string =
     teamShots.add(%int(sim.teamStats[t].shots))
     teamSot.add(%int(sim.teamStats[t].shotsOnTarget))
     teamPossession.add(%int(sim.teamStats[t].possessionTicks))
-  $(%*{
+  var doc = %*{
     "names": names,
-    "scores": scores,
-    "win": win,
     "team": team,
     "shirt": shirt,
     "goals": goals,
@@ -207,7 +211,11 @@ proc playerResultsJson*(sim: SimServer): string =
     "endRule": endRuleText(sim.endRule),
     "finalTick": sim.tickCount,
     "seed": sim.config.seed
-  })
+  }
+  if scored:
+    doc["scores"] = scores
+    doc["win"] = win
+  $doc
 
 proc resultRecordJson*(sim: SimServer): string =
   ## The `result` replay chat record: the full results document, written once

@@ -140,7 +140,26 @@ proc certFixtureFitsTheCertifierClock() =
 
 proc bundledPlayerResources() =
   let m = manifest()
-  doAssert m["player"].len >= 1
+  let gameEnv = m["game"]["runnable"]["env"]
+  doAssert gameEnv{"COWORLD_LLM_ENABLED"}.getStr == "true",
+    "game.runnable.env must set COWORLD_LLM_ENABLED=true for server-side seat inference"
+  doAssert gameEnv{"COWORLD_LLM_MODEL"}.getStr.len > 0,
+    "game.runnable.env must set a default COWORLD_LLM_MODEL"
+  doAssert m["player"].len >= 2,
+    "manifest must advertise both the native model player and the scripted baseline"
+  let first = m["player"][0]
+  doAssert first["id"].getStr == "model",
+    "the first player entry must be the native model player"
+  doAssert first["env"]{"COWORLD_LLM_ENABLED"}.getStr == "true",
+    "the native model player must set COWORLD_LLM_ENABLED=true"
+  doAssert first["env"]{"COWORLD_LLM_MODEL"}.getStr.len > 0,
+    "the native model player must set a default COWORLD_LLM_MODEL"
+  doAssert first["env"]{"PLAYER_PROMPT"}.getStr.len > 0,
+    "the native model player must carry a non-empty PLAYER_PROMPT"
+  doAssert not first["env"].hasKey("PLAYER_SCRIPTED"),
+    "the native model player must not set PLAYER_SCRIPTED"
+  var hasBaseline = false
+  var declared: seq[string]
   for entry in m["player"]:
     doAssert entry["type"].getStr == "player"
     doAssert entry.hasKey("id") and entry.hasKey("name") and
@@ -148,16 +167,22 @@ proc bundledPlayerResources() =
     doAssert entry["run"][0].getStr == "/bin/grf-football-player"
     doAssert entry["resources"]["limits"]["cpu"].getStr == "1",
       "the bundled player cpu limit minimum is \"1\""
-  var declared: seq[string]
-  for entry in m["player"]:
     declared.add(entry["id"].getStr)
+    if entry["id"].getStr == "baseline":
+      hasBaseline = true
+      doAssert entry["env"]{"PLAYER_SCRIPTED"}.getStr == "zonal",
+        "the scripted baseline player must set PLAYER_SCRIPTED=zonal"
+  doAssert hasBaseline, "scripted baseline must be declared as a separate player id"
   var seated: seq[string]
   for entry in m["certification"]["players"]:
-    seated.add(entry["player_id"].getStr)
+    let pid = entry["player_id"].getStr
+    doAssert pid in declared,
+      "every certification seat must reference a declared player: " & pid
+    seated.add(pid)
   for id in declared:
     doAssert id in seated,
       "every declared player must occupy a certification slot: " & id
-  report "the bundled player is declared, resourced and seated"
+  report "native model player is first, game/model LLM env is set, and every declared player is seated"
 
 proc hostedLlmNeedsNoSecret() =
   let m = manifest()

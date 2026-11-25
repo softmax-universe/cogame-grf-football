@@ -104,8 +104,8 @@ proc stepEvents*(
       events.add(%*{
         "t": tick,
         "k": "gameover",
-        "winner": (if sim.isDraw: "" else: teamText(sim.winner)),
-        "draw": sim.isDraw,
+        "winner": (if not sim.isScored() or sim.isDraw: "" else: teamText(sim.winner)),
+        "draw": (sim.isScored() and sim.isDraw),
         "reason": reasonText(sim.endReason),
         "endRule": endRuleText(sim.endRule),
         "score": [sim.goals(Red), sim.goals(Blue)]
@@ -219,10 +219,10 @@ proc applyRecord*(sim: var SimServer, text: string) =
     sim.feed.add FeedLine(tick: int32(sim.tickCount), kind: "fallback",
       team: (if seat >= 0 and seat < SeatCount:
         int32(ord(teamOfSeat(seat))) else: -1),
-      text: "seat fell back (" & node{"cause"}.getStr() & ")")
+      text: "seat decision failed (" & node{"cause"}.getStr() & ")")
   of "budget_guard":
     sim.feed.add FeedLine(tick: int32(sim.tickCount), kind: "fallback",
-      team: -1, text: "decision budget guard: scripted for the rest")
+      team: -1, text: "decision budget guard reached")
   of "stop":
     # THE ONE RECORD THAT MOVES THE SIM. A wall-clock stop and a host error are
     # wall-clock facts: no amount of sim state implies them, so the server
@@ -445,11 +445,11 @@ proc buildStateJson*(
       overTeams[teamText(team)] = %*{
         "goals": sim.goals(team),
         "lives": sim.goals(team),
-        "score": float(best) / 1000.0
+        "score": (if sim.isScored(): %(float(best) / 1000.0) else: newJNull())
       }
     state["over"] = %*{
-      "winner": (if sim.isDraw: "" else: teamText(sim.winner)),
-      "draw": sim.isDraw,
+      "winner": (if not sim.isScored() or sim.isDraw: "" else: teamText(sim.winner)),
+      "draw": (sim.isScored() and sim.isDraw),
       "reason": reasonText(sim.endReason),
       "endRule": endRuleText(sim.endRule),
       "timeLimit": sim.endRule == erFullTime,

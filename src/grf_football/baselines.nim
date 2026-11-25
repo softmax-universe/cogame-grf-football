@@ -23,7 +23,12 @@ type
     blGegenpress = "gegenpress"
 
 proc baselineOfName*(name: string): Baseline =
-  if name.strip().toLowerAscii() == "gegenpress": blGegenpress else: blZonal
+  case name.strip().toLowerAscii()
+  of "zonal": blZonal
+  of "gegenpress": blGegenpress
+  else:
+    raise newException(GrfFootballError,
+      "unknown scripted baseline: " & name.strip())
 
 proc ballInOwnHalf*(sim: SimServer, team: Team): bool {.inline.} =
   if attackDir(team) > 0: sim.ball.x < CentreX else: sim.ball.x > CentreX

@@ -60,9 +60,10 @@ then the raw payload) carrying:
 ```
 
 * A non-empty `prompt` makes the seat an **LLM seat**: the game server sends
-  that text to Claude once per decision turn.
-* Otherwise `scripted` selects a built-in baseline; an unknown or absent value
-  is `zonal`.
+  that text to Claude once per decision turn. Setting both `prompt` and
+  `scripted` is rejected.
+* Otherwise `scripted` selects a built-in baseline (`zonal` or `gegenpress`;
+  omitted or `null` defaults to `zonal`; unknown names are rejected).
 * `policy` is a free label, capped at **48 runes**, recorded in the replay.
 * `prompt` is capped at **4000 runes** at the transport (over-long is
   truncated, never rejected) and is **never** written to the replay or the
@@ -134,19 +135,19 @@ View coordinates (metres, centred), rounded to one decimal.
            "sprint": "auto", "tackle": "auto", "say": "in behind"}]}
 ```
 
-| field | cap / legal values | repair |
+| field | requirement / legal values | default (if omitted or `null`) |
 |---|---|---|
-| `note` | ≤ 160 runes | truncated on a rune boundary |
-| `cogs` | exactly 1 entry, the seat's shirt | extras dropped; a missing entry is filled from last turn's directive, else from `zonal` |
-| `cogs[].id` | the seat's own shirt alias, case-insensitive, ≤ 8 runes | an unmatched id is assigned to the seat's shirt by position |
-| `cogs[].role` | `striker` `winger` `playmaker` `anchor` | → the shirt's table role |
-| `cogs[].intent` | `press` `hold_shape` `make_run` `support` `drop_deep` `carry` `switch_play` `shadow` | → `support` |
-| `cogs[].target` | `[x, y]` metres | clamped to x ∈ [−42, 42], y ∈ [−27, 27]; non-finite/missing → the cog's current position |
-| `cogs[].on_ball` | `shoot` `pass_short` `pass_long` `pass_high` `dribble` `hold` | → `pass_short` |
-| `cogs[].pass_to` | a *teammate* shirt id ≠ self | → `null` (the controller picks the best `passScore` receiver) |
-| `cogs[].sprint` | `auto` `always` `never` | → `auto` |
-| `cogs[].tackle` | `auto` `never` | → `auto` |
-| `cogs[].say` | ≤ 48 runes | truncated on a rune boundary |
+| `note` | optional string, ≤ 160 runes (truncated on a rune boundary) | `""` |
+| `cogs` | required array of **exact length 1**, containing one object | none (rejected) |
+| `cogs[0].id` | required string matching the seat's own shirt alias (`RED-9`, case-insensitive) | none (rejected) |
+| `cogs[0].role` | optional string: `striker` `winger` `playmaker` `anchor` | the shirt's table role |
+| `cogs[0].intent` | required string: `press` `hold_shape` `make_run` `support` `drop_deep` `carry` `switch_play` `shadow` | none (rejected) |
+| `cogs[0].target` | required `[x, y]` array of 2 finite JSON numbers with x ∈ [−42, 42], y ∈ [−27, 27] | none (rejected) |
+| `cogs[0].on_ball` | required string: `shoot` `pass_short` `pass_long` `pass_high` `dribble` `hold` | none (rejected) |
+| `cogs[0].pass_to` | optional teammate shirt id ≠ self, or `null` | `null` (controller picks best `passScore` receiver) |
+| `cogs[0].sprint` | optional string: `auto` `always` `never` | `auto` |
+| `cogs[0].tackle` | optional string: `auto` `never` | `auto` |
+| `cogs[0].say` | optional string, ≤ 48 runes (truncated on a rune boundary) | `""` |
 
 Three further caps on strings that reach the replay: `register.policy` ≤ 48
 runes, any recorded error text (`fallback.detail`) ≤ 200 runes, and the whole
@@ -157,11 +158,14 @@ a string by byte index on any path to the replay is forbidden: a byte-truncated
 multi-byte character renders fine in a browser and then fails a strict UTF-8
 parser.
 
-**Parsing is tolerant:** markdown fences are stripped, the outermost balanced
-`{…}` is taken if the model prefixed prose, `cogs` is accepted as a bare object
-or as an object keyed by id, and numeric strings in `target` are accepted. Only
-when no object with a usable entry can be recovered do the retry and then the
-fallback fire.
+**Parsing is strict:** a reply must be **exactly one JSON object**, either bare
+or inside a single ordinary outer Markdown code fence (plain or `json`-tagged).
+Surrounding prose, extra JSON objects, unknown fields, legacy field aliases,
+alternative `cogs`/`target` shapes, numeric strings, out-of-pitch targets,
+unmatched shirt ids, and invalid enum values are all **rejected** (triggering
+at most one retry; if still unresolved, the engine records the failure cause
+and terminates the unfinished episode unscored with no synthesized move or
+numeric score).
 
 ## The replay bytes
 

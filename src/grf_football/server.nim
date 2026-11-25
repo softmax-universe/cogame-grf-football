@@ -390,21 +390,45 @@ proc registrationOf*(
   let parsed = parseRegistration(text)
   if not parsed.ok:
     return (false, previous, "")
+  for key, _ in parsed.node:
+    if key notin ["type", "prompt", "scripted", "policy"]:
+      return (false, previous, "")
+  let promptNode = parsed.node{"prompt"}
+  if not promptNode.isNil and promptNode.kind notin {JNull, JString}:
+    return (false, previous, "")
+  let scriptedNode = parsed.node{"scripted"}
+  if not scriptedNode.isNil and scriptedNode.kind notin {JNull, JString}:
+    return (false, previous, "")
+  let policyNode = parsed.node{"policy"}
+  if not policyNode.isNil and policyNode.kind notin {JNull, JString}:
+    return (false, previous, "")
   var policy = SeatPolicy(connected: true)
-  let prompt = clipRunes(parsed.node{"prompt"}.getStr(), MaxPromptRunes)
-  let scripted = parsed.node{"scripted"}
-  let label = clipRunes(parsed.node{"policy"}.getStr(), MaxPolicyRunes)
+  let prompt =
+    if not promptNode.isNil and promptNode.kind == JString:
+      clipRunes(promptNode.getStr(), MaxPromptRunes)
+    else: ""
+  let scriptedRaw =
+    if not scriptedNode.isNil and scriptedNode.kind == JString:
+      scriptedNode.getStr().strip().toLowerAscii()
+    else: ""
+  let label =
+    if not policyNode.isNil and policyNode.kind == JString:
+      clipRunes(policyNode.getStr(), MaxPolicyRunes)
+    else: ""
+  if prompt.len > 0 and scriptedRaw.len > 0:
+    return (false, previous, "")
   if prompt.len > 0:
     policy.kind = pkLlm
     policy.prompt = prompt
     policy.baseline = ""
   else:
     policy.kind = pkScripted
-    policy.baseline =
-      if scripted.kind == JString and scripted.getStr().len > 0:
-        scripted.getStr()
-      else:
-        "zonal"
+    if scriptedRaw.len == 0:
+      policy.baseline = "zonal"
+    elif scriptedRaw in ["zonal", "gegenpress"]:
+      policy.baseline = scriptedRaw
+    else:
+      return (false, previous, "")
   policy.label = if label.len > 0: label else: policyKindText(policy.kind)
   # The player re-sends its registration once after the first frame (in case
   # the first send raced the slot registration), so only an ACTUAL change earns
@@ -559,11 +583,15 @@ proc runServerLoop*(
       writeFile(eventsPath, collectedEvents.eventsJsonl(sim.tickCount))
       echo "Events written: ", eventsPath, " (", collectedEvents.len,
         " events)"
-    if runtimeConfig.resultsUri.len > 0:
-      runtimeConfig.writeResults(sim.playerResultsJson() & "\n")
-    elif saveScoresPath.len > 0:
-      writeFile(saveScoresPath, sim.playerResultsJson() & "\n")
-    echo "Results: ", sim.playerResultsJson()
+    if sim.isScored():
+      if runtimeConfig.resultsUri.len > 0:
+        runtimeConfig.writeResults(sim.playerResultsJson() & "\n")
+      elif saveScoresPath.len > 0:
+        writeFile(saveScoresPath, sim.playerResultsJson() & "\n")
+      echo "Results: ", sim.playerResultsJson()
+    else:
+      echo "Unscored fault outcome (no results.json written): ",
+        sim.playerResultsJson()
     engine.trajectory.finishCapture(parseJson(sim.playerResultsJson()))
 
   proc stopServing() =
@@ -676,9 +704,8 @@ proc runServerLoop*(
           sim.players[index].registered = true
         recordAndWrite(reg.record)
 
-      # A seat that never connects does NOT end the episode: the no-show is
-      # declared, its shirt plays the `zonal` baseline, and the match runs to
-      # full time.
+      # A seat that never connects terminates the unfinished episode unscored
+      # with no synthesized baseline play or invented score.
       if not replayLoaded and sim.lobbyJoinTimedOut() and not failureDeclared:
         failureDeclared = true
         let stuck = sim.nextPlayerSlot()
@@ -687,8 +714,13 @@ proc runServerLoop*(
             $config.lobbyJoinTimeoutTicks & " lobby ticks (~" &
             $(config.lobbyJoinTimeoutTicks div TargetFps) & "s)")
         echo "grf-football: lobby join timeout on slot ", stuck,
-          "; starting with the scripted baseline in that seat"
-        sim.startGame()
+          "; terminating unfinished episode unscored"
+        if not stopRecorded:
+          stopRecorded = true
+          recordAndWrite($(%*{
+            "k": "stop", "reason": "fault", "rule": "host_error",
+            "tick": sim.tickCount}))
+        quitAfterFrame = true
 
       var frameEvents = newJArray()
       if replayLoaded:
@@ -734,9 +766,23 @@ proc runServerLoop*(
                 opening = true
             if opening or elapsedTicks mod sim.turnTicks() == 0:
               let seconds = int((getMonoTime() - episodeStart).inSeconds)
-              engine.turn(sim, elapsedTicks div sim.turnTicks(), seconds)
+              let turnOutcome = engine.turn(
+                sim, elapsedTicks div sim.turnTicks(), seconds)
               for record in engine.records:
                 recordAndWrite(record)
+              if turnOutcome.failed:
+                if not failureDeclared:
+                  failureDeclared = true
+                  let msg = turnOutcome.cause &
+                    (if turnOutcome.detail.len > 0: ": " & turnOutcome.detail
+                     else: "")
+                  declarePlayerFailure(turnOutcome.seat, msg)
+                if not stopRecorded:
+                  stopRecorded = true
+                  recordAndWrite($(%*{
+                    "k": "stop", "reason": "fault", "rule": "host_error",
+                    "tick": sim.tickCount}))
+                quitAfterFrame = true
           # EDIT 1: the input source is the control layer, not the socket.
           let actions = sim.compileActions(sim.activeDirective)
           replayWriter.writeInputFrameMasks(tickTime(sim.tickCount), actions)
@@ -766,7 +812,7 @@ proc runServerLoop*(
               lastGoalsSeen[team] = sim.teamStats[team].goals
               engine.noteGoal(sim.tickCount, int(sim.lastGoalBy), team)
           sim.stepEvents(broadcastTracker, frameEvents)
-          if sim.phase == GameOver and sim.gameOverTimer <= 0:
+          if (sim.phase == GameOver and sim.gameOverTimer <= 0) or quitAfterFrame:
             # The `result` record is written at the very END, so its finalTick is
             # the same number results.json reports.
             if not resultRecordWritten:

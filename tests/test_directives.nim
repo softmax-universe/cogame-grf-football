@@ -1,118 +1,189 @@
-## Tolerant parsing and repair, and the RUNE-BOUNDARY truncation discipline.
+## Strict directive parsing, single-object JSON/fence extraction, and the
+## RUNE-BOUNDARY truncation discipline.
 
 import std/[json, strutils, unicode]
 import lib/helpers
 
 proc parse(sim: SimServer, seat: int, text: string):
-    tuple[directive: Directive, usable: bool] =
+    tuple[directive: Directive, ok: bool, error: string] =
   let payload = extractJsonObject(text)
-  sim.parseDirective(seat, payload, emptyDirective(seat), false,
-    sim.zonalDirective(seat, 0), 0)
+  sim.parseDirective(seat, payload, 0)
 
-proc fencedAndProseWrapped() =
+proc mustRejectJson(text: string, label: string) =
+  var raised = false
+  try:
+    discard extractJsonObject(text)
+  except GrfFootballError:
+    raised = true
+  doAssert raised, "extractJsonObject must reject " & label
+
+proc mustRejectDirective(sim: SimServer, seat: int, text: string, label: string) =
+  let payload = extractJsonObject(text)
+  let res = sim.parseDirective(seat, payload, 0)
+  doAssert not res.ok, "parseDirective must reject " & label
+  doAssert res.error.len > 0, "rejection must carry a reason for " & label
+
+proc bareAndSingleFenceParse() =
   var sim = playing(testConfig())
-  let fenced = "```json\n{\"note\":\"ok\",\"cogs\":[{\"id\":\"RED-9\"," &
-    "\"intent\":\"press\",\"target\":[3,4]}]}\n```"
-  let a = parse(sim, 2, fenced)
-  doAssert a.usable, "a fenced reply parses"
+  let bare = "  {\"note\":\"ok\",\"cogs\":[{\"id\":\"RED-9\",\"intent\":\"press\"," &
+    "\"target\":[3,4],\"on_ball\":\"pass_short\"}]}  "
+  let a = parse(sim, 2, bare)
+  doAssert a.ok, "bare JSON object parses: " & a.error
   doAssert a.directive.cog.intent == inPress
-  let prose = "Sure! Here is my order:\n{\"note\":\"ok\"," &
-    "\"cogs\":[{\"id\":\"RED-9\",\"intent\":\"shadow\",\"target\":[1,1]}]}"
-  let b = parse(sim, 2, prose)
-  doAssert b.usable, "a prose-prefixed reply parses"
-  doAssert b.directive.cog.intent == inShadow
-  report "markdown fences and a prose prefix both parse"
+  doAssert a.directive.cog.role == SeatRole[2], "omitted role keeps seat default"
+  doAssert a.directive.cog.sprint == spAuto, "omitted sprint keeps default"
+  doAssert a.directive.cog.tackle == tkAuto, "omitted tackle keeps default"
+  doAssert a.directive.cog.passTo == -1, "omitted pass_to keeps null default"
 
-proc bareObjectAndKeyedObject() =
-  var sim = playing(testConfig())
-  let bare = "{\"note\":\"n\",\"cogs\":{\"id\":\"RED-9\",\"intent\":\"carry\"," &
-    "\"target\":[0,0]}}"
-  doAssert parse(sim, 2, bare).usable, "a bare cogs object parses"
-  let keyed = "{\"note\":\"n\",\"cogs\":{\"RED-9\":{\"intent\":\"support\"," &
-    "\"target\":[0,0]}}}"
-  let k = parse(sim, 2, keyed)
-  doAssert k.usable, "an id-keyed cogs object parses"
-  doAssert k.directive.cog.intent == inSupport
-  report "cogs as a bare object and as an id-keyed map both parse"
+  let jsonFenced = "```json\n{\"note\":\"ok\",\"cogs\":[{\"id\":\"RED-9\"," &
+    "\"intent\":\"press\",\"target\":[3,4],\"on_ball\":\"shoot\"}]}\n```"
+  let b = parse(sim, 2, jsonFenced)
+  doAssert b.ok, "json-tagged fence parses: " & b.error
+  doAssert b.directive.cog.onBall == obShoot
 
-proc numericStringsAndClamps() =
-  var sim = playing(testConfig())
-  let text = "{\"cogs\":[{\"id\":\"RED-9\",\"intent\":\"make_run\"," &
-    "\"target\":[\"12.5\",\"-3\"]}]}"
-  let a = parse(sim, 2, text)
-  doAssert a.usable
-  doAssert a.directive.cog.targetX == worldXOfView(12.5)
-  doAssert a.directive.cog.targetY == worldYOfView(-3.0)
-  let far = "{\"cogs\":[{\"id\":\"RED-9\",\"target\":[9999,-9999]}]}"
-  let b = parse(sim, 2, far)
-  doAssert b.directive.cog.targetX == worldXOfView(42.0),
-    "an out-of-range target is clamped to the pitch"
-  doAssert b.directive.cog.targetY == worldYOfView(-27.0)
-  report "numeric strings parse and out-of-range targets clamp"
+  let plainFenced = "```\n{\"cogs\":[{\"id\":\"RED-9\",\"intent\":\"shadow\"," &
+    "\"target\":[1,1],\"on_ball\":\"hold\"}]}\n```"
+  let c = parse(sim, 2, plainFenced)
+  doAssert c.ok, "plain fence parses: " & c.error
+  doAssert c.directive.cog.intent == inShadow
+  doAssert c.directive.note == "", "omitted note defaults to empty"
+  report "bare JSON and single plain/json outer fences parse with optional defaults"
 
-proc unknownEnumsRepair() =
-  var sim = playing(testConfig())
-  let text = "{\"cogs\":[{\"id\":\"RED-9\",\"intent\":\"teleport\"," &
-    "\"role\":\"goalkeeper\",\"on_ball\":\"bicycle_kick\"," &
-    "\"sprint\":\"maybe\",\"tackle\":\"perhaps\",\"target\":[0,0]}]}"
-  let d = parse(sim, 2, text).directive
-  doAssert d.cog.intent == inSupport, "an unknown intent repairs to support"
-  doAssert d.cog.role == SeatRole[2], "an unknown role repairs to the shirt's"
-  doAssert d.cog.onBall == obPassShort, "an unknown on_ball repairs"
-  doAssert d.cog.sprint == spAuto
-  doAssert d.cog.tackle == tkAuto
-  report "every unknown enum repairs to the documented default"
+proc proseAndExtraObjectsRejected() =
+  const ValidObj = "{\"note\":\"ok\",\"cogs\":[{\"id\":\"RED-9\"," &
+    "\"intent\":\"shadow\",\"target\":[1,1],\"on_ball\":\"hold\"}]}"
+  mustRejectJson("Sure! Here is my order:\n" & ValidObj, "prose prefix")
+  mustRejectJson(ValidObj & "\nGood luck!", "prose suffix")
+  mustRejectJson("Here:\n```json\n" & ValidObj & "\n```", "prose before fence")
+  mustRejectJson("```json\n" & ValidObj & "\n```\nThanks!", "prose after fence")
+  mustRejectJson(ValidObj & "\n" & ValidObj, "two bare JSON objects")
+  mustRejectJson("```json\n" & ValidObj & "\n```\n```json\n" & ValidObj & "\n```",
+    "two fenced blocks")
+  mustRejectJson("```python\n" & ValidObj & "\n```", "non-json fence tag")
+  mustRejectJson("```json\n" & ValidObj, "unterminated fence")
+  mustRejectJson("[" & ValidObj & "]", "top-level JSON array")
+  mustRejectJson("   ", "empty response")
+  report "surrounding prose, extra objects, and bad fences are rejected"
 
-proc passToRepairs() =
+proc legacyShapesAndAliasesRejected() =
   var sim = playing(testConfig())
-  let opponent = "{\"cogs\":[{\"id\":\"RED-9\",\"pass_to\":\"BLUE-4\"," &
-    "\"target\":[0,0]}]}"
-  doAssert parse(sim, 2, opponent).directive.cog.passTo == -1,
-    "pass_to naming an opponent repairs to null"
-  let self = "{\"cogs\":[{\"id\":\"RED-9\",\"pass_to\":\"RED-9\"," &
-    "\"target\":[0,0]}]}"
-  doAssert parse(sim, 2, self).directive.cog.passTo == -1,
-    "pass_to naming yourself repairs to null"
-  let mate = "{\"cogs\":[{\"id\":\"RED-9\",\"pass_to\":\"red-10\"," &
-    "\"target\":[0,0]}]}"
-  doAssert parse(sim, 2, mate).directive.cog.passTo ==
-    int32(cogOfShirt(Red, 10)), "pass_to is case-insensitive"
-  report "pass_to repairs to null unless it names a teammate"
+  mustRejectDirective(sim, 2,
+    "{\"note\":\"n\",\"cogs\":{\"id\":\"RED-9\",\"intent\":\"carry\"," &
+    "\"target\":[0,0],\"on_ball\":\"dribble\"}}",
+    "bare cogs object")
+  mustRejectDirective(sim, 2,
+    "{\"note\":\"n\",\"cogs\":{\"RED-9\":{\"intent\":\"support\"," &
+    "\"target\":[0,0],\"on_ball\":\"pass_short\"}}}",
+    "id-keyed cogs map")
+  mustRejectDirective(sim, 2,
+    "{\"note\":\"n\",\"cog\":[{\"id\":\"RED-9\",\"intent\":\"carry\"," &
+    "\"target\":[0,0],\"on_ball\":\"dribble\"}]}",
+    "legacy cog field alias")
+  mustRejectDirective(sim, 2,
+    "{\"note\":\"n\",\"extra\":1,\"cogs\":[{\"id\":\"RED-9\"," &
+    "\"intent\":\"carry\",\"target\":[0,0],\"on_ball\":\"dribble\"}]}",
+    "unknown top-level key")
+  mustRejectDirective(sim, 2,
+    "{\"cogs\":[{\"id\":\"RED-9\",\"intent\":\"carry\",\"target\":[0,0]," &
+    "\"on_ball\":\"dribble\",\"bonus\":true}]}",
+    "unknown cog key")
+  report "legacy cogs shapes, cog alias, and unknown keys are rejected"
 
-proc extraAndMissingEntries() =
+proc targetValidationStrict() =
   var sim = playing(testConfig())
-  let extra = "{\"cogs\":[{\"id\":\"RED-9\",\"intent\":\"press\"," &
-    "\"target\":[0,0]},{\"id\":\"RED-10\",\"intent\":\"carry\"," &
-    "\"target\":[0,0]}]}"
-  let a = parse(sim, 2, extra)
-  doAssert a.usable
-  doAssert a.directive.cog.intent == inPress, "extra entries are dropped"
-  let empty = "{\"note\":\"nothing\",\"cogs\":[]}"
-  let payload = extractJsonObject(empty)
-  let previous = sim.zonalDirective(2, 7)
-  let b = sim.parseDirective(2, payload, previous, true,
-    sim.zonalDirective(2, 8), 8)
-  doAssert not b.usable, "no usable entry is the only retry trigger"
-  doAssert b.directive.cog.intent == previous.cog.intent,
-    "a missing entry keeps last turn's order"
-  report "extra entries drop and a missing entry keeps last turn's order"
+  mustRejectDirective(sim, 2,
+    "{\"cogs\":[{\"id\":\"RED-9\",\"intent\":\"make_run\"," &
+    "\"target\":[\"12.5\",\"-3\"],\"on_ball\":\"shoot\"}]}",
+    "numeric strings in target")
+  mustRejectDirective(sim, 2,
+    "{\"cogs\":[{\"id\":\"RED-9\",\"intent\":\"make_run\"," &
+    "\"target\":{\"x\":12.5,\"y\":-3},\"on_ball\":\"shoot\"}]}",
+    "object target {x, y}")
+  mustRejectDirective(sim, 2,
+    "{\"cogs\":[{\"id\":\"RED-9\",\"intent\":\"make_run\"," &
+    "\"target\":[9999,-9999],\"on_ball\":\"shoot\"}]}",
+    "out-of-pitch target")
+  mustRejectDirective(sim, 2,
+    "{\"cogs\":[{\"id\":\"RED-9\",\"intent\":\"make_run\"," &
+    "\"target\":[0,0,1],\"on_ball\":\"shoot\"}]}",
+    "3-element target array")
+  mustRejectDirective(sim, 2,
+    "{\"cogs\":[{\"id\":\"RED-9\",\"intent\":\"make_run\"," &
+    "\"on_ball\":\"shoot\"}]}",
+    "missing target")
+  let ok = parse(sim, 2,
+    "{\"cogs\":[{\"id\":\"RED-9\",\"intent\":\"make_run\"," &
+    "\"target\":[12.5,-3],\"on_ball\":\"shoot\"}]}")
+  doAssert ok.ok
+  doAssert ok.directive.cog.targetX == worldXOfView(12.5)
+  doAssert ok.directive.cog.targetY == worldYOfView(-3.0)
+  report "target requires finite in-pitch [x, y] numbers"
 
-proc unmatchedIdIsAssignedByPosition() =
+proc unknownEnumsRejected() =
   var sim = playing(testConfig())
-  let text = "{\"cogs\":[{\"id\":\"BLUE-11\",\"intent\":\"drop_deep\"," &
-    "\"target\":[0,0]}]}"
-  let d = parse(sim, 2, text)
-  doAssert d.usable, "an unmatched id is assigned to the seat's shirt"
-  doAssert d.directive.cog.intent == inDropDeep
-  let record = directiveJson(2, d.directive)
-  doAssert record["cogs"][0]["id"].getStr == cogId(cogOfSeat(2)),
-    "the recorded id is always the seat's own shirt"
-  report "an unmatched id is assigned to the seat's shirt by position"
+  mustRejectDirective(sim, 2,
+    "{\"cogs\":[{\"id\":\"RED-9\",\"intent\":\"teleport\"," &
+    "\"target\":[0,0],\"on_ball\":\"pass_short\"}]}",
+    "unknown intent")
+  mustRejectDirective(sim, 2,
+    "{\"cogs\":[{\"id\":\"RED-9\",\"role\":\"goalkeeper\"," &
+    "\"intent\":\"press\",\"target\":[0,0],\"on_ball\":\"pass_short\"}]}",
+    "unknown role")
+  mustRejectDirective(sim, 2,
+    "{\"cogs\":[{\"id\":\"RED-9\",\"intent\":\"press\"," &
+    "\"target\":[0,0],\"on_ball\":\"bicycle_kick\"}]}",
+    "unknown on_ball")
+  mustRejectDirective(sim, 2,
+    "{\"cogs\":[{\"id\":\"RED-9\",\"intent\":\"press\"," &
+    "\"target\":[0,0],\"on_ball\":\"pass_short\",\"sprint\":\"maybe\"}]}",
+    "unknown sprint")
+  mustRejectDirective(sim, 2,
+    "{\"cogs\":[{\"id\":\"RED-9\",\"intent\":\"press\"," &
+    "\"target\":[0,0],\"on_ball\":\"pass_short\",\"tackle\":\"perhaps\"}]}",
+    "unknown tackle")
+  mustRejectDirective(sim, 2,
+    "{\"cogs\":[{\"id\":\"RED-9\",\"target\":[0,0],\"on_ball\":\"pass_short\"}]}",
+    "missing intent")
+  mustRejectDirective(sim, 2,
+    "{\"cogs\":[{\"id\":\"RED-9\",\"intent\":\"press\",\"target\":[0,0]}]}",
+    "missing on_ball")
+  report "unknown or missing required enums are rejected"
+
+proc passToAndIdValidationStrict() =
+  var sim = playing(testConfig())
+  mustRejectDirective(sim, 2,
+    "{\"cogs\":[{\"id\":\"RED-9\",\"intent\":\"support\",\"target\":[0,0]," &
+    "\"on_ball\":\"pass_short\",\"pass_to\":\"BLUE-4\"}]}",
+    "pass_to naming an opponent")
+  mustRejectDirective(sim, 2,
+    "{\"cogs\":[{\"id\":\"RED-9\",\"intent\":\"support\",\"target\":[0,0]," &
+    "\"on_ball\":\"pass_short\",\"pass_to\":\"RED-9\"}]}",
+    "pass_to naming self")
+  mustRejectDirective(sim, 2,
+    "{\"cogs\":[{\"id\":\"BLUE-11\",\"intent\":\"drop_deep\",\"target\":[0,0]," &
+    "\"on_ball\":\"hold\"}]}",
+    "unmatched shirt id")
+  mustRejectDirective(sim, 2,
+    "{\"cogs\":[{\"id\":\"RED9\",\"intent\":\"drop_deep\",\"target\":[0,0]," &
+    "\"on_ball\":\"hold\"}]}",
+    "missing hyphen in shirt id")
+  mustRejectDirective(sim, 2,
+    "{\"cogs\":[{\"id\":\"RED-9\",\"intent\":\"press\",\"target\":[0,0]," &
+    "\"on_ball\":\"hold\"},{\"id\":\"RED-10\",\"intent\":\"carry\"," &
+    "\"target\":[0,0],\"on_ball\":\"dribble\"}]}",
+    "extra cog entry")
+  mustRejectDirective(sim, 2,
+    "{\"note\":\"nothing\",\"cogs\":[]}",
+    "empty cogs array")
+
+  let mate = parse(sim, 2,
+    "{\"cogs\":[{\"id\":\"RED-9\",\"intent\":\"support\",\"target\":[0,0]," &
+    "\"on_ball\":\"pass_short\",\"pass_to\":\"red-10\"}]}")
+  doAssert mate.ok
+  doAssert mate.directive.cog.passTo == int32(cogOfShirt(Red, 10))
+  report "id, pass_to, and cogs arity are strictly validated"
 
 proc runeTruncationOnTheBoundary() =
-  ## A note whose 160th rune is a 4-byte emoji truncates on the RUNE boundary
-  ## and the result is still valid UTF-8. A byte-truncated multi-byte character
-  ## is exactly the bug that makes replay bytes fail a strict parser.
   var note = ""
   for _ in 0 ..< (MaxNoteRunes - 1):
     note.add("a")
@@ -147,13 +218,12 @@ proc recordsStayUnderTheCap() =
 
 when isMainModule:
   echo "test_directives"
-  fencedAndProseWrapped()
-  bareObjectAndKeyedObject()
-  numericStringsAndClamps()
-  unknownEnumsRepair()
-  passToRepairs()
-  extraAndMissingEntries()
-  unmatchedIdIsAssignedByPosition()
+  bareAndSingleFenceParse()
+  proseAndExtraObjectsRejected()
+  legacyShapesAndAliasesRejected()
+  targetValidationStrict()
+  unknownEnumsRejected()
+  passToAndIdValidationStrict()
   runeTruncationOnTheBoundary()
   recordsStayUnderTheCap()
   echo "test_directives ok"

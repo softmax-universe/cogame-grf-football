@@ -316,7 +316,10 @@ proc finishGame*(sim: var SimServer, reason: EndReason, rule: EndRule) =
   sim.endRule = rule
   sim.ended = true
   let diff = sim.goalDiff(Red)
-  if reason == reasonFault or diff == 0:
+  if reason == reasonFault:
+    sim.isDraw = false
+    sim.winner = Red
+  elif diff == 0:
     sim.isDraw = true
     sim.winner = Red
   else:

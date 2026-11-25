@@ -47,13 +47,19 @@ proc winFollowsGoalDifference() =
     doAssert not draw.seatWon(seat), "a draw wins for nobody"
   report "win follows goal difference and a draw wins for nobody"
 
-proc faultScoresHalfForEveryone() =
+proc faultIsUnscored() =
   let sim = scoredSim(4, 0, reasonFault, erSimFault)
+  doAssert not sim.isScored(), "a fault episode is never scored"
   for seat in 0 ..< SeatCount:
-    doAssert sim.scorePermille(seat) == 500,
-      "a fault episode scores 0.500 for every seat"
     doAssert not sim.seatWon(seat), "a fault wins for nobody"
-  report "a fault scores 0.500 x 8 with win all false"
+  let doc = parseJson(sim.playerResultsJson())
+  doAssert doc["reason"].getStr == "fault"
+  doAssert doc["endRule"].getStr == "sim_fault"
+  doAssert not doc.hasKey("scores"),
+    "an unscored fault must not emit numeric scores"
+  doAssert not doc.hasKey("win"),
+    "an unscored fault must not emit win booleans"
+  report "a fault is unscored with no numeric scores or invented winners"
 
 proc resultsDocumentShape() =
   let sim = scoredSim(2, 1)
@@ -117,7 +123,7 @@ when isMainModule:
   formulaAndSign()
   eightScoresSumToFour()
   winFollowsGoalDifference()
-  faultScoresHalfForEveryone()
+  faultIsUnscored()
   resultsDocumentShape()
   endConditionsAreReachable()
   endingIsIdempotent()
