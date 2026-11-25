@@ -3,6 +3,7 @@
 
 import std/[json, strutils, unicode]
 import lib/helpers
+import grf_football/prompts
 
 proc parse(sim: SimServer, seat: int, text: string):
     tuple[directive: Directive, ok: bool, error: string] =
@@ -223,6 +224,77 @@ proc recordsStayUnderTheCap() =
     "an over-long record is shrunk STRUCTURALLY and stays parseable"
   report "a directive record is capped at 900 runes and stays parseable JSON"
 
+proc invalidOnBallDiagnosticIncludesBoundedValue() =
+  var sim = playing(testConfig())
+  let strBad = parse(sim, 2,
+    "{\"cogs\":[{\"id\":\"RED-9\",\"intent\":\"press\"," &
+    "\"target\":[0,0],\"on_ball\":\"bicycle_kick\"}]}")
+  doAssert not strBad.ok
+  doAssert strBad.error == "invalid on_ball: \"bicycle_kick\"",
+    "unexpected invalid on_ball string diagnostic: " & strBad.error
+
+  let emptyBad = parse(sim, 2,
+    "{\"cogs\":[{\"intent\":\"press\",\"target\":[0,0],\"on_ball\":\"\"}]}")
+  doAssert not emptyBad.ok
+  doAssert emptyBad.error == "invalid on_ball: \"\"",
+    "unexpected empty on_ball diagnostic: " & emptyBad.error
+
+  let intBad = parse(sim, 2,
+    "{\"cogs\":[{\"id\":\"RED-9\",\"intent\":\"press\"," &
+    "\"target\":[0,0],\"on_ball\":42}]}")
+  doAssert not intBad.ok
+  doAssert intBad.error == "invalid on_ball: 42",
+    "unexpected non-string on_ball diagnostic: " & intBad.error
+
+  let longVal = repeat("x", MaxInvalidOnBallRunes + 40)
+  let longBad = parse(sim, 2,
+    "{\"cogs\":[{\"intent\":\"press\",\"target\":[0,0],\"on_ball\":\"" &
+    longVal & "\"}]}")
+  doAssert not longBad.ok
+  doAssert longBad.error.startsWith("invalid on_ball: \""),
+    "long invalid on_ball diagnostic prefix mismatch: " & longBad.error
+  let longPayload = longBad.error["invalid on_ball: ".len .. ^1]
+  doAssert longPayload.runeLen <= MaxInvalidOnBallRunes,
+    "invalid on_ball diagnostic value exceeded rune bound: " & $longPayload.runeLen
+  doAssert longPayload.endsWith("\u2026"),
+    "over-long invalid on_ball diagnostic must end with ellipsis"
+  doAssert isValidUtf8(longBad.error)
+
+  let emojiVal = repeat("\xF0\x9F\x8F\x86", MaxInvalidOnBallRunes + 20)
+  let emojiBad = parse(sim, 2,
+    "{\"cogs\":[{\"intent\":\"press\",\"target\":[0,0],\"on_ball\":\"" &
+    emojiVal & "\"}]}")
+  doAssert not emojiBad.ok
+  let emojiPayload = emojiBad.error["invalid on_ball: ".len .. ^1]
+  doAssert emojiPayload.runeLen <= MaxInvalidOnBallRunes,
+    "emoji invalid on_ball diagnostic exceeded rune bound: " & $emojiPayload.runeLen
+  doAssert emojiBad.error.validateUtf8() == -1,
+    "emoji invalid on_ball diagnostic must stay valid UTF-8"
+  report "invalid on_ball diagnostic reports the actual value with a rune-safe length bound"
+
+proc systemMessageMinimumExampleParses() =
+  var sim = playing(testConfig())
+  let msg = systemMessage(PromptSelection(variant: pvCanonical))
+  doAssert "shoot|pass_short" notin msg, "systemMessage must not show pseudo-JSON pipe schema"
+  doAssert "(optional)" notin msg, "systemMessage must not show pseudo-JSON (optional) strings"
+  doAssert "[x,y]" notin msg, "systemMessage must not show pseudo-JSON [x,y] target"
+  var exampleLine = ""
+  for line in msg.splitLines():
+    let trimmed = line.strip()
+    if trimmed.startsWith("{") and trimmed.endsWith("}"):
+      exampleLine = trimmed
+      break
+  doAssert exampleLine.len > 0, "systemMessage must include a single-line minimum legal JSON reply"
+  for seat in 0 ..< SeatCount:
+    let res = parse(sim, seat, exampleLine)
+    doAssert res.ok, "systemMessage minimum JSON reply must parse for seat " & $seat & ": " & res.error
+  for capability in ["press", "hold_shape", "make_run", "support", "drop_deep",
+      "carry", "switch_play", "shadow", "shoot", "pass_short", "pass_long",
+      "pass_high", "dribble", "hold", "pass_to", "sprint", "tackle", "role",
+      "say", "note"]:
+    doAssert capability in msg, "systemMessage must keep capability selectable: " & capability
+  report "systemMessage embeds a legal minimum JSON reply that parses for every seat"
+
 when isMainModule:
   echo "test_directives"
   bareAndSingleFenceParse()
@@ -230,6 +302,8 @@ when isMainModule:
   legacyShapesAndAliasesRejected()
   targetValidationStrict()
   unknownEnumsRejected()
+  invalidOnBallDiagnosticIncludesBoundedValue()
+  systemMessageMinimumExampleParses()
   passToAndIdValidationStrict()
   runeTruncationOnTheBoundary()
   recordsStayUnderTheCap()

@@ -64,7 +64,7 @@ docker run --rm -e COWORLD_PLAYER_WS_URL=ws://game:8080/player?slot=1 \
 `zonal` is the reference scripted baseline (hold the zone, support the ball,
 press when it is close). `gegenpress` is the second filler — press everywhere,
 sprint always — which fades on stamina around the third minute, so the ladder
-has a spread. When an LLM seat fails both attempts on a turn (or has no
+has a spread. When an LLM seat fails on a turn (or has no
 credentials / hits the budget guard), the engine records the failure cause
 (including `COGAME_PLAYER_FAILURE_URI`) and terminates the unfinished episode
 unscored (`reason: "fault"`, no `results.json` / no numeric scores) rather than

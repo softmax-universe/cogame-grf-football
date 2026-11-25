@@ -227,7 +227,7 @@ makes a team zero-sum game collusion-friendly.
 A seat that never connects within `lobbyJoinTimeoutTicks` (1440 = 60 s) is
 reported to `COGAME_PLAYER_FAILURE_URI` and terminates the unfinished episode
 unscored (`fault/host_error`) with no synthesized baseline play. Likewise, an
-LLM seat whose decision fails both attempts (invalid/ambiguous output, provider
+LLM seat whose decision fails (invalid/ambiguous output, provider
 or transport error, timeout, missing credentials, or budget guard) records the
 failure cause and terminates the unfinished episode unscored with zero
 synthesized control.

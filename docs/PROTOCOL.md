@@ -188,7 +188,7 @@ does **not** shift the arrays: the 22 cogs are fixed for the whole match.
 |---|---|
 | `register` | `seat`, `team`, `shirt`, `id`, `policy` (≤48 runes), `kind` (`llm`\|`scripted`), `baseline` |
 | `directive` | `turn`, `half`, `seat`, `id`, `team`, `source` (`llm`\|`scripted`\|`fallback`), `latency_ms`, `note`, `cogs`:[{`id`,`role`,`intent`,`target`,`on_ball`,`pass_to`,`sprint`,`tackle`,`say`}] |
-| `fallback` | `turn`, `seat`, `attempt` (1\|2), `cause`, `detail` (≤200 runes) |
+| `fallback` | `turn`, `seat`, `attempt` (1), `cause`, `detail` (≤200 runes) |
 | `budget_guard` | `turn`, `remaining_s` |
 | `stop` | `reason`, `rule`, `tick` — a wall-clock fact, see below |
 | `result` | the full results document, written once at game over |

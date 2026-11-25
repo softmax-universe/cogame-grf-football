@@ -26,30 +26,26 @@ until it recovers.
 """
 
 const ReplyRules = """Reply with a single JSON object and NOTHING else.
-Schema:
-{"note":"<=160 chars (optional)",
- "cogs":[{"id":"<your shirt id> (optional)",
-          "role":"striker|winger|playmaker|anchor (optional)",
-          "intent":"press|hold_shape|make_run|support|drop_deep|carry|switch_play|shadow",
-          "target":[x,y],
-          "on_ball":"shoot|pass_short|pass_long|pass_high|dribble|hold (optional)",
-          "pass_to":"<teammate shirt id or null> (optional)",
-          "sprint":"auto|always|never (optional)",
-          "tackle":"auto|never (optional)",
-          "say":"<=48 chars (optional)"}]}
+Minimum legal reply:
+{"cogs":[{"intent":"support","target":[0,0]}]}
 Required: cogs (exact length 1) with intent and target.
-Optional fields may be omitted or null (defaults: id = your shirt, role = your seat role,
-on_ball = "pass_short", pass_to = null, sprint = "auto", tackle = "auto", note/say = "").
-Intents: press = close down whoever has the ball; hold_shape = hold your target and
-face the ball; make_run = run into space ahead of the ball on your side; support =
-offer a short passing option beside the ball; drop_deep = come back toward your own
-goal to receive; carry = go get the ball and run with it; switch_play = move to the
-far side of the pitch; shadow = mark the nearest opponent.
-target is metres: x in [-42,42], y in [-27,27]. It is used directly by hold_shape and
-as a bias by everything else.
-on_ball is what you do when the ball is at YOUR feet (defaults to pass_short if omitted
-or null); the controller ignores an illegal choice (a shot from 60 metres, a pass to
-nobody) and plays the safe option."""
+Intents: press (close down whoever has the ball), hold_shape (hold target and face the ball),
+make_run (run into space ahead of the ball on your side), support (offer a short passing option
+beside the ball), drop_deep (come back toward your own goal to receive), carry (go get the ball
+and run with it), switch_play (move to the far side of the pitch), shadow (mark the nearest
+opponent).
+target: [x, y] finite numbers in metres, x in [-42, 42], y in [-27, 27] (used directly by
+hold_shape and as a bias by other intents).
+Optional cog fields (omit or null for default):
+- on_ball: shoot, pass_short, pass_long, pass_high, dribble, or hold (default pass_short; action
+  with the ball at your feet; an illegal choice uses the controller's safe option)
+- pass_to: teammate shirt id other than yourself, e.g. "RED-10" (default null)
+- sprint: auto, always, or never (default auto)
+- tackle: auto or never (default auto)
+- id: your own shirt id from you.id (default your shirt)
+- role: striker, winger, playmaker, or anchor (default your seat role)
+- say: short shout up to 48 chars (default "")
+Optional top-level field: note (short note up to 160 chars, default "")."""
 
 proc systemMessage*(selection: PromptSelection): string =
   result = selection.introduction() & "\n"
